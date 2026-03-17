@@ -509,8 +509,33 @@
             </Transition>
           </div>
 
+          <!-- Synthetic delegate controls -->
+          <div class="form-group">
+            <label>
+              <input
+                type="checkbox"
+                :checked="enableSyntheticDelegates"
+                @change="e => enableSyntheticDelegates = e.target.checked"
+              />
+              Add synthetic 3GPP delegates
+            </label>
+          </div>
+
+          <div v-if="enableSyntheticDelegates" class="form-group">
+            <label>
+              Delegate count
+              <input
+                type="number"
+                :min="1"
+                :max="500"
+                v-model.number="syntheticDelegateCount"
+                style="width: 80px; margin-left: 8px"
+              />
+            </label>
+          </div>
+
           <div class="action-group dual">
-            <button 
+            <button
               class="action-btn secondary"
               @click="$emit('go-back')"
             >
@@ -672,6 +697,10 @@ let lastLoggedConfigStage = ''
 const useCustomRounds = ref(false) // Use auto-generated rounds by default
 const customMaxRounds = ref(40)   // Default recommendation: 40 rounds
 
+// Synthetic delegate settings
+const enableSyntheticDelegates = ref(true)
+const syntheticDelegateCount = ref(30)
+
 // Watch stage to update phase
 watch(currentStage, (newStage) => {
   if (newStage === 'Generate Agent Profiles' || newStage === 'generating_profiles') {
@@ -783,7 +812,9 @@ const startPrepareSimulation = async () => {
     const res = await prepareSimulation({
       simulation_id: props.simulationId,
       use_llm_for_profiles: true,
-      parallel_profile_count: 5
+      parallel_profile_count: 5,
+      enable_synthetic_delegates: enableSyntheticDelegates.value,
+      synthetic_delegate_count: syntheticDelegateCount.value,
     })
     
     if (res.success && res.data) {
