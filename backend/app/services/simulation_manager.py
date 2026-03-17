@@ -17,6 +17,7 @@ from ..utils.logger import get_logger, log_llm_interaction
 from .zep_entity_reader import ZepEntityReader, FilteredEntities
 from .oasis_profile_generator import OasisProfileGenerator, OasisAgentProfile
 from .simulation_config_generator import SimulationConfigGenerator, SimulationParameters
+from .synthetic_delegate_generator import SyntheticDelegateGenerator
 
 logger = get_logger('mirofish.simulation')
 
@@ -234,7 +235,10 @@ class SimulationManager:
         defined_entity_types: Optional[List[str]] = None,
         use_llm_for_profiles: bool = True,
         progress_callback: Optional[callable] = None,
-        parallel_profile_count: int = 3
+        parallel_profile_count: int = 3,
+        enable_synthetic_delegates: bool = True,
+        synthetic_delegate_count: int = 30,
+        synthetic_delegate_config: Optional[Dict[str, Any]] = None,
     ) -> SimulationState:
         """
         Prepare simulation environment (fully automated).
@@ -267,7 +271,11 @@ class SimulationManager:
             self._save_simulation_state(state)
             
             sim_dir = self._get_simulation_dir(simulation_id)
-            
+
+            # ========== Stage 1.5 init — always run regardless of entity count ==========
+            synthetic_nodes = []
+            synthetic_profiles = []
+
             # ========== Stage 1: Read and filter entities ==========
             if progress_callback:
                 progress_callback("reading", 0, "Connecting to Zep graph...")
@@ -294,11 +302,52 @@ class SimulationManager:
                     total=filtered.filtered_count
                 )
             
-            if filtered.filtered_count == 0:
+            if filtered.filtered_count == 0 and not enable_synthetic_delegates:
                 state.status = SimulationStatus.FAILED
                 state.error = "No matching entities found. Please check whether the graph was built correctly"
                 self._save_simulation_state(state)
                 return state
+
+            # ========== Stage 1.5: Synthetic delegate generation ==========
+            if enable_synthetic_delegates:
+                if progress_callback:
+                    progress_callback(
+                        "generating_delegates", 0,
+                        "Inferring 3GPP delegate distribution...",
+                        current=0, total=synthetic_delegate_count
+                    )
+                delegate_gen = SyntheticDelegateGenerator()
+                distribution = delegate_gen.infer_distribution(
+                    document_text=document_text,
+                    simulation_requirement=simulation_requirement,
+                    total_delegates=synthetic_delegate_count,
+                    manual_config=synthetic_delegate_config,
+                )
+
+                def delegate_progress(current, total, msg):
+                    if progress_callback:
+                        progress_callback(
+                            "generating_delegates",
+                            int(current / max(total, 1) * 100),
+                            msg,
+                            current=current, total=total
+                        )
+
+                synthetic_nodes, synthetic_profiles = delegate_gen.generate(
+                    distribution=distribution,
+                    document_text=document_text,
+                    simulation_requirement=simulation_requirement,
+                    progress_callback=delegate_progress,
+                )
+                logger.info(
+                    f"Synthetic delegate generation complete: {len(synthetic_nodes)} delegates"
+                )
+                if progress_callback:
+                    progress_callback(
+                        "generating_delegates", 100,
+                        f"Generated {len(synthetic_nodes)} synthetic delegates",
+                        current=len(synthetic_nodes), total=len(synthetic_nodes)
+                    )
             
             # ========== Stage 2: Generate agent profiles ==========
             total_entities = len(filtered.entities)
@@ -359,8 +408,12 @@ class SimulationManager:
                     response_text=f"generated_profiles_count={len(profiles)}",
                 )
             
+            # Merge synthetic profiles — must happen before save_profiles calls
+            for i, sp in enumerate(synthetic_profiles):
+                sp.user_id = len(profiles) + i
+            profiles = profiles + synthetic_profiles
             state.profiles_count = len(profiles)
-            
+
             # Save profile files (note: Twitter uses CSV format, Reddit uses JSON format)
             # Reddit has already been saved in real-time during generation; save again here to ensure completeness
             if progress_callback:
@@ -419,7 +472,7 @@ class SimulationManager:
                 graph_id=state.graph_id,
                 simulation_requirement=simulation_requirement,
                 document_text=document_text,
-                entities=filtered.entities,
+                entities=filtered.entities + synthetic_nodes,
                 enable_twitter=state.enable_twitter,
                 enable_reddit=state.enable_reddit
             )
