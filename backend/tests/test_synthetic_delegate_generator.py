@@ -223,3 +223,122 @@ class TestInferDistribution:
         # Should not raise — falls back to preset distribution
         assert dist.total_delegates == 30
         assert len(dist.companies) > 0
+
+
+class TestRuleBasedBatch:
+    def _make_gen(self):
+        gen = SyntheticDelegateGenerator.__new__(SyntheticDelegateGenerator)
+        gen.company_library = gen._load_company_library()
+        return gen
+
+    def test_rule_based_batch_returns_correct_count(self):
+        gen = self._make_gen()
+        company = CompanySpec("Ericsson", "ERX", "EU", "Sweden", 5, ["RAN1"], "x")
+        profiles, nodes = gen._generate_rule_based_batch(company, 5, id_offset=0)
+        assert len(profiles) == 5
+        assert len(nodes) == 5
+
+    def test_rule_based_profile_has_required_fields(self):
+        gen = self._make_gen()
+        company = CompanySpec("Ericsson", "ERX", "EU", "Sweden", 3, ["RAN1"], "x")
+        profiles, nodes = gen._generate_rule_based_batch(company, 3, id_offset=0)
+        for p in profiles:
+            assert p.user_id >= 0
+            assert p.name
+            assert p.user_name
+            assert p.bio
+            assert p.persona
+            assert p.company == "Ericsson"
+        for n in nodes:
+            assert n.company == "Ericsson"
+            assert n.get_entity_type() == "Delegate"
+
+    def test_rule_based_usernames_are_unique(self):
+        gen = self._make_gen()
+        company = CompanySpec("Nokia", "NOK", "EU", "Finland", 10, ["RAN2"], "y")
+        profiles, _ = gen._generate_rule_based_batch(company, 10, id_offset=0)
+        usernames = [p.user_name for p in profiles]
+        assert len(usernames) == len(set(usernames))
+
+    def test_id_offset_applied(self):
+        gen = self._make_gen()
+        company = CompanySpec("Ericsson", "ERX", "EU", "Sweden", 3, ["RAN1"], "x")
+        profiles, _ = gen._generate_rule_based_batch(company, 3, id_offset=10)
+        assert profiles[0].user_id == 10
+        assert profiles[2].user_id == 12
+
+
+class TestGenerateMethod:
+    def _make_gen_with_mock_llm(self, llm_response: str):
+        gen = SyntheticDelegateGenerator.__new__(SyntheticDelegateGenerator)
+        gen.company_library = gen._load_company_library()
+        gen._model = "test-model"
+        gen._api_key = "test"
+        gen._base_url = "http://localhost"
+        mock_llm = MagicMock()
+        mock_choice = MagicMock()
+        mock_choice.message.content = llm_response
+        mock_response = MagicMock()
+        mock_response.choices = [mock_choice]
+        mock_llm.chat.completions.create.return_value = mock_response
+        gen._llm = mock_llm
+        return gen
+
+    def _make_distribution(self, delegate_count: int) -> DelegateDistribution:
+        return DelegateDistribution(
+            companies=[
+                CompanySpec("Ericsson", "ERX", "EU", "Sweden",
+                            delegate_count, ["RAN1"], "standards-driven")
+            ],
+            working_groups=["RAN1"],
+            topic_context="NR positioning",
+            total_delegates=delegate_count,
+        )
+
+    def test_generate_returns_correct_counts(self):
+        delegate_json = json.dumps([
+            {"name": f"Delegate {i}", "username": f"del_{i}_erx",
+             "bio": "Engineer at Ericsson", "persona": "You are an Ericsson engineer...",
+             "age": 35, "gender": "male", "mbti": "INTJ", "country": "Sweden",
+             "company": "Ericsson", "working_group": "RAN1",
+             "expertise_areas": ["massive MIMO"], "delegate_role": "delegate",
+             "seniority": "senior engineer", "stance": "neutral",
+             "karma": 1000, "follower_count": 100}
+            for i in range(5)
+        ])
+        gen = self._make_gen_with_mock_llm(delegate_json)
+        dist = self._make_distribution(5)
+        nodes, profiles = gen.generate(dist, "doc text", "NR positioning")
+        assert len(nodes) == 5
+        assert len(profiles) == 5
+
+    def test_generate_falls_back_on_llm_failure(self):
+        gen = SyntheticDelegateGenerator.__new__(SyntheticDelegateGenerator)
+        gen.company_library = gen._load_company_library()
+        gen._model = "test"
+        gen._api_key = "test"
+        gen._base_url = "http://localhost"
+        mock_llm = MagicMock()
+        mock_llm.chat.completions.create.side_effect = Exception("LLM down")
+        gen._llm = mock_llm
+        dist = self._make_distribution(5)
+        nodes, profiles = gen.generate(dist, "doc text", "req")
+        assert len(nodes) == 5
+        assert len(profiles) == 5
+
+    def test_nodes_have_3gpp_fields(self):
+        delegate_json = json.dumps([
+            {"name": "Dr. Test", "username": "dr_test_erx",
+             "bio": "bio", "persona": "persona...",
+             "age": 40, "gender": "female", "mbti": "INTJ", "country": "Sweden",
+             "company": "Ericsson", "working_group": "RAN1",
+             "expertise_areas": ["MIMO"], "delegate_role": "rapporteur",
+             "seniority": "principal", "stance": "pragmatic",
+             "karma": 1200, "follower_count": 150}
+        ])
+        gen = self._make_gen_with_mock_llm(delegate_json)
+        dist = self._make_distribution(1)
+        nodes, profiles = gen.generate(dist, "doc", "req")
+        assert nodes[0].company == "Ericsson"
+        assert nodes[0].working_group == "RAN1"
+        assert nodes[0].delegate_role == "rapporteur"

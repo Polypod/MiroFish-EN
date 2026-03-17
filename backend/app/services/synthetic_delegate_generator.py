@@ -306,6 +306,209 @@ class SyntheticDelegateGenerator:
             total_delegates=total_delegates,
         )
 
+    def _generate_rule_based_batch(
+        self,
+        company: CompanySpec,
+        count: int,
+        id_offset: int,
+    ) -> Tuple[List[OasisAgentProfile], List[SyntheticEntityNode]]:
+        """Rule-based fallback when LLM batch fails."""
+        profiles: List[OasisAgentProfile] = []
+        nodes: List[SyntheticEntityNode] = []
+        used_usernames: set = set()
+        wg = company.typical_wgs[0] if company.typical_wgs else "RAN1"
+        for i in range(count):
+            first = random.choice(self._FIRST_NAMES)
+            last = random.choice(self._LAST_NAMES)
+            name = f"{first} {last}"
+            base_username = f"{first.lower()}_{last.lower()}_{company.short_name.lower()}"
+            username = base_username
+            suffix = 1
+            while username in used_usernames:
+                username = f"{base_username}_{suffix}"
+                suffix += 1
+            used_usernames.add(username)
+            profile = OasisAgentProfile(
+                user_id=id_offset + i,
+                user_name=username,
+                name=name,
+                bio=f"Engineer at {company.name}, {wg} delegate.",
+                persona=(
+                    f"You are {name}, an engineer at {company.name} specialising in {wg}. "
+                    f"You participate in 3GPP standardization meetings and review technical "
+                    f"proposals carefully. Your stance is neutral."
+                ),
+                age=random.randint(28, 55),
+                gender=random.choice(["male", "female"]),
+                mbti=random.choice(self._MBTI),
+                country=company.country,
+                profession=f"Standards Engineer at {company.name}",
+                interested_topics=[wg],
+                karma=random.randint(500, 2000),
+                follower_count=random.randint(50, 500),
+                source_entity_type="Delegate",
+            )
+            profile.company = company.name  # type: ignore[attr-defined]
+            profiles.append(profile)
+            node = SyntheticEntityNode(
+                uuid=str(uuid_lib.uuid4()),
+                name=name,
+                summary=profile.bio,
+                company=company.name,
+                working_group=wg,
+                expertise=wg,
+                delegate_role="delegate",
+                seniority="engineer",
+                stance="neutral",
+            )
+            nodes.append(node)
+        return profiles, nodes
+
+    def _generate_llm_batch(
+        self,
+        company: CompanySpec,
+        count: int,
+        id_offset: int,
+        topic_context: str,
+        document_text: str,
+    ) -> Tuple[List[OasisAgentProfile], List[SyntheticEntityNode]]:
+        """One LLM Call 2 batch for a single company."""
+        wgs_str = ", ".join(company.typical_wgs) or "RAN1"
+        system_prompt = (
+            "You are a 3GPP standardization expert. Generate realistic delegate profiles "
+            "for a simulation. Output a JSON array only — no markdown, no commentary."
+        )
+        user_prompt = (
+            f"Generate exactly {count} delegate profiles for {company.name} "
+            f"({company.short_name}, {company.region}).\n"
+            f"Topic context: {topic_context}\n"
+            f"Typical working groups: {wgs_str}\n"
+            f"Company stance: {company.typical_stance}\n\n"
+            f"Document excerpt (for context):\n{document_text[:3000]}\n\n"
+            "Return a JSON array where each element has:\n"
+            '{"name": "...", "username": "...", "bio": "...", '
+            '"persona": "You are <name>, <rich background including company, WG, expertise, '
+            'stance relevant to the debate topic>...", '
+            '"age": int, "gender": "male|female|non-binary", "mbti": "...", '
+            f'"country": "{company.country}", '
+            '"company": "...", "working_group": "...", '
+            '"expertise_areas": ["..."], '
+            '"delegate_role": "delegate|rapporteur|chair|observer", '
+            '"seniority": "junior engineer|senior engineer|principal engineer|fellow", '
+            '"stance": "...", "karma": int, "follower_count": int}'
+        )
+        kwargs: Dict[str, Any] = {
+            "model": self._model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            "temperature": 0.7,
+            "max_tokens": 4096,
+        }
+        if Config.LLM_JSON_MODE:
+            kwargs["response_format"] = {"type": "json_object"}
+        response = self._llm.chat.completions.create(**kwargs)
+        content = response.choices[0].message.content or ""
+        content = re.sub(r"^```(?:json)?\s*\n?", "", content.strip(), flags=re.IGNORECASE)
+        content = re.sub(r"\n?```\s*$", "", content)
+        log_llm_interaction(
+            source_file="synthetic_delegate_generator.py",
+            messages=kwargs["messages"],
+            response_text=content,
+        )
+        parsed = json.loads(content.strip())
+        if isinstance(parsed, dict):
+            items = parsed.get("delegates", parsed.get("profiles", list(parsed.values())[0]))
+        else:
+            items = parsed
+        profiles: List[OasisAgentProfile] = []
+        nodes: List[SyntheticEntityNode] = []
+        for i, d in enumerate(items[:count]):
+            profile = OasisAgentProfile(
+                user_id=id_offset + i,
+                user_name=d.get("username", f"del_{id_offset+i}_{company.short_name.lower()}"),
+                name=d.get("name", f"Delegate {id_offset+i}"),
+                bio=d.get("bio", f"Engineer at {company.name}"),
+                persona=d.get("persona", f"You are an engineer at {company.name}."),
+                age=d.get("age"),
+                gender=d.get("gender"),
+                mbti=d.get("mbti"),
+                country=d.get("country", company.country),
+                profession=d.get("seniority", "engineer") + f" at {company.name}",
+                interested_topics=d.get("expertise_areas", []),
+                karma=d.get("karma", 1000),
+                follower_count=d.get("follower_count", 100),
+                source_entity_type="Delegate",
+            )
+            profile.company = company.name  # type: ignore[attr-defined]
+            profiles.append(profile)
+            node = SyntheticEntityNode(
+                uuid=str(uuid_lib.uuid4()),
+                name=profile.name,
+                summary=profile.bio,
+                company=company.name,
+                working_group=d.get("working_group", company.typical_wgs[0] if company.typical_wgs else ""),
+                expertise=", ".join(d.get("expertise_areas", [])),
+                delegate_role=d.get("delegate_role", "delegate"),
+                seniority=d.get("seniority", "senior engineer"),
+                stance=d.get("stance", "neutral"),
+            )
+            nodes.append(node)
+        if len(profiles) < count:
+            rb_profiles, rb_nodes = self._generate_rule_based_batch(
+                company, count - len(profiles), id_offset + len(profiles)
+            )
+            profiles.extend(rb_profiles)
+            nodes.extend(rb_nodes)
+        return profiles, nodes
+
+    def generate(
+        self,
+        distribution: DelegateDistribution,
+        document_text: str,
+        simulation_requirement: str,
+        progress_callback: Optional[Callable] = None,
+    ) -> Tuple[List[SyntheticEntityNode], List[OasisAgentProfile]]:
+        """
+        LLM Call 2: batch-generate delegate profiles for all companies.
+        Returns (SyntheticEntityNode list, OasisAgentProfile list).
+        """
+        all_profiles: List[OasisAgentProfile] = []
+        all_nodes: List[SyntheticEntityNode] = []
+        total = distribution.total_delegates
+        completed = 0
+        id_offset = 0
+
+        def _process_company(company: CompanySpec) -> Tuple[List[OasisAgentProfile], List[SyntheticEntityNode]]:
+            try:
+                p, n = self._generate_llm_batch(
+                    company, company.delegate_count, id_offset, distribution.topic_context, document_text
+                )
+                return p, n
+            except Exception as e:
+                logger.warning(f"LLM batch failed for {company.name}: {e}. Retrying once...")
+                try:
+                    p, n = self._generate_llm_batch(
+                        company, company.delegate_count, id_offset, distribution.topic_context, document_text
+                    )
+                    return p, n
+                except Exception as e2:
+                    logger.warning(f"Retry failed for {company.name}: {e2}. Using rule-based fallback.")
+                    return self._generate_rule_based_batch(company, company.delegate_count, id_offset)
+
+        for company in distribution.companies:
+            profiles, nodes = _process_company(company)
+            for i, p in enumerate(profiles):
+                p.user_id = id_offset + i
+            all_profiles.extend(profiles)
+            all_nodes.extend(nodes)
+            id_offset += len(profiles)
+            completed += len(profiles)
+            if progress_callback:
+                progress_callback(completed, total, f"Generated delegates for {company.name}")
+        return all_nodes, all_profiles
+
     @staticmethod
     def _rescale_counts(companies: List[CompanySpec], target: int) -> List[CompanySpec]:
         """
