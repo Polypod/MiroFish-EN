@@ -533,6 +533,7 @@ def prepare_simulation():
                     # Build detailed progress information
                     stage_names = {
                         "reading": "Reading graph entities",
+                        "generating_delegates": "Generating synthetic delegates",
                         "generating_profiles": "Generating Agent personas",
                         "generating_config": "Generating simulation config",
                         "copying_scripts": "Preparing simulation scripts"
