@@ -197,7 +197,7 @@ Counts are then normalised to sum exactly to `total_delegates` by adding/removin
 
 In LLM-inferred mode, the LLM outputs `delegate_count` directly per company; `typical_delegate_share` is provided as context only.
 
-**`synthetic_delegate_config` validation:** If a manual config is provided, the backend validates it before use. Missing required fields (`name`, `delegate_count`, `typical_wgs`) return HTTP 400. If the sum of `delegate_count` values differs from `synthetic_delegate_count`, the values are rescaled proportionally to match.
+**`synthetic_delegate_config` validation:** If a manual config is provided, the backend validates it before use. Missing required fields (`name`, `delegate_count`, `typical_wgs`) return HTTP 400. Any `delegate_count` value that is zero or negative also returns HTTP 400. If the sum of `delegate_count` values differs from `synthetic_delegate_count`, values are rescaled proportionally; float results are rounded to the nearest integer, and any residual to make the sum exactly equal `synthetic_delegate_count` is added to or subtracted from the company with the highest `delegate_count`.
 
 ---
 
