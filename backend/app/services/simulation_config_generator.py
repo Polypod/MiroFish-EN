@@ -13,7 +13,7 @@ Uses step-by-step generation to avoid failures from overly long one-shot output:
 
 import json
 import math
-from typing import Dict, Any, List, Optional, Callable
+from typing import Dict, Any, List, Optional, Callable, Union
 from dataclasses import dataclass, field, asdict
 from datetime import datetime
 
@@ -249,7 +249,7 @@ class SimulationConfigGenerator:
         graph_id: str,
         simulation_requirement: str,
         document_text: str,
-        entities: List[EntityNode],
+        entities: List[Union[EntityNode, "SyntheticEntityNode"]],
         enable_twitter: bool = True,
         enable_reddit: bool = True,
         progress_callback: Optional[Callable[[int, int, str], None]] = None,
@@ -978,6 +978,19 @@ Return JSON format (no markdown):
                 "sentiment_bias": 0.0,
                 "stance": "neutral",
                 "influence_weight": 1.0
+            }
+        elif entity_type.lower() in ["delegate", "rapporteur", "chair", "observer"]:
+            # 3GPP conference delegates: daytime conference hours, focused discussion
+            return {
+                "activity_level": 0.6,
+                "posts_per_hour": 0.2,
+                "comments_per_hour": 0.8,
+                "active_hours": list(range(8, 18)),  # 08:00-17:59 conference hours
+                "response_delay_min": 10,
+                "response_delay_max": 60,
+                "sentiment_bias": 0.0,
+                "stance": "neutral",
+                "influence_weight": 1.5
             }
         else:
             # General users: evening peak
