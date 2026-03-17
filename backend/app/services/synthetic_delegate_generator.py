@@ -199,6 +199,113 @@ class SyntheticDelegateGenerator:
             total_delegates=total_delegates,
         )
 
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+
+    def infer_distribution(
+        self,
+        document_text: str,
+        simulation_requirement: str,
+        total_delegates: int,
+        manual_config: Optional[Dict[str, Any]] = None,
+    ) -> DelegateDistribution:
+        """
+        LLM Call 1: infer company/WG distribution from documents.
+        Skipped if manual_config is provided.
+        Falls back to preset library if LLM fails.
+        """
+        if manual_config:
+            return self._build_distribution_from_manual(
+                manual_config, total_delegates, simulation_requirement
+            )
+        try:
+            return self._infer_distribution_with_llm(
+                document_text, simulation_requirement, total_delegates
+            )
+        except Exception as e:
+            logger.warning(f"LLM distribution inference failed: {e}. Falling back to presets.")
+            return self._build_distribution_from_presets(total_delegates, simulation_requirement)
+
+    def _infer_distribution_with_llm(
+        self,
+        document_text: str,
+        simulation_requirement: str,
+        total_delegates: int,
+    ) -> DelegateDistribution:
+        company_list_json = json.dumps(
+            [{"name": c["name"], "short_name": c["short_name"], "region": c["region"],
+              "country": c["country"], "typical_wgs": c["typical_wgs"],
+              "typical_stance": c["typical_stance"],
+              "typical_delegate_share": c["typical_delegate_share"]}
+             for c in self.company_library["companies"]],
+            ensure_ascii=False
+        )
+        system_prompt = (
+            "You are a 3GPP standardization expert. Analyze the provided documents and "
+            "determine which companies are most relevant to the debate, then allocate "
+            f"{total_delegates} delegate slots across companies. "
+            "Output valid JSON only — no markdown, no commentary."
+        )
+        user_prompt = (
+            f"## Simulation Requirement\n{simulation_requirement}\n\n"
+            f"## Document Excerpt\n{document_text[:8000]}\n\n"
+            f"## Available Companies (reference only — you may use any subset)\n{company_list_json}\n\n"
+            "Output JSON with this exact structure:\n"
+            "{\n"
+            '  "topic_context": "<one sentence summary of the debate>",\n'
+            '  "companies": [\n'
+            '    {"name": "...", "short_name": "...", "region": "...", "country": "...",\n'
+            '     "delegate_count": <int>, "typical_wgs": ["..."], "typical_stance": "..."}\n'
+            "  ]\n"
+            "}\n"
+            f"Total delegate_count values must sum to exactly {total_delegates}."
+        )
+        kwargs: Dict[str, Any] = {
+            "model": self._model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            "temperature": 0.3,
+            "max_tokens": 2048,
+        }
+        if Config.LLM_JSON_MODE:
+            kwargs["response_format"] = {"type": "json_object"}
+        response = self._llm.chat.completions.create(**kwargs)
+        content = response.choices[0].message.content or ""
+        content = re.sub(r"^```(?:json)?\s*\n?", "", content.strip(), flags=re.IGNORECASE)
+        content = re.sub(r"\n?```\s*$", "", content)
+        parsed = json.loads(content.strip())
+        log_llm_interaction(
+            source_file="synthetic_delegate_generator.py",
+            messages=kwargs["messages"],
+            response_text=content,
+        )
+        companies = [
+            CompanySpec(
+                name=c["name"], short_name=c.get("short_name", c["name"][:4].upper()),
+                region=c.get("region", "EU"), country=c.get("country", ""),
+                delegate_count=c["delegate_count"],
+                typical_wgs=c.get("typical_wgs", []),
+                typical_stance=c.get("typical_stance", "neutral"),
+            )
+            for c in parsed.get("companies", [])
+        ]
+        if companies:
+            companies = self._rescale_counts(companies, total_delegates)
+        all_wgs: List[str] = []
+        for c in companies:
+            for wg in c.typical_wgs:
+                if wg not in all_wgs:
+                    all_wgs.append(wg)
+        return DelegateDistribution(
+            companies=companies,
+            working_groups=all_wgs,
+            topic_context=parsed.get("topic_context", simulation_requirement),
+            total_delegates=total_delegates,
+        )
+
     @staticmethod
     def _rescale_counts(companies: List[CompanySpec], target: int) -> List[CompanySpec]:
         """

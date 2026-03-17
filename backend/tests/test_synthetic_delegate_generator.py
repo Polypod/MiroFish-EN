@@ -1,5 +1,7 @@
 """Tests for SyntheticDelegateGenerator dataclasses and helpers."""
+import json
 import pytest
+from unittest.mock import MagicMock, patch
 from backend.app.services.synthetic_delegate_generator import (
     SyntheticEntityNode,
     CompanySpec,
@@ -160,3 +162,64 @@ class TestBuildDistributionFromPresets:
         gen.company_library = gen._load_company_library()
         dist = gen._build_distribution_from_presets(30, "test")
         assert all(c.delegate_count >= 1 for c in dist.companies)
+
+
+class TestInferDistribution:
+    def _make_gen(self):
+        """Create generator with mocked LLM."""
+        gen = SyntheticDelegateGenerator.__new__(SyntheticDelegateGenerator)
+        gen.company_library = gen._load_company_library()
+        gen._model = "test-model"
+        gen._api_key = "test"
+        gen._base_url = "http://localhost"
+        mock_llm = MagicMock()
+        gen._llm = mock_llm
+        return gen, mock_llm
+
+    def _make_llm_response(self, content: str):
+        mock_choice = MagicMock()
+        mock_choice.message.content = content
+        mock_response = MagicMock()
+        mock_response.choices = [mock_choice]
+        return mock_response
+
+    def test_manual_config_skips_llm(self):
+        gen, mock_llm = self._make_gen()
+        manual = {
+            "companies": [
+                {"name": "Ericsson", "short_name": "ERX", "region": "EU",
+                 "country": "Sweden", "delegate_count": 10, "typical_wgs": ["RAN1"],
+                 "typical_stance": "standards-driven"}
+            ]
+        }
+        dist = gen.infer_distribution("doc text", "test req", 10, manual_config=manual)
+        mock_llm.chat.completions.create.assert_not_called()
+        assert dist.total_delegates == 10
+
+    def test_llm_response_parsed_into_distribution(self):
+        gen, mock_llm = self._make_gen()
+        llm_json = json.dumps({
+            "topic_context": "NR positioning accuracy for Release 18",
+            "companies": [
+                {"name": "Ericsson", "short_name": "ERX", "region": "EU",
+                 "country": "Sweden", "delegate_count": 12, "typical_wgs": ["RAN1"],
+                 "typical_stance": "standards-driven"},
+                {"name": "Nokia", "short_name": "NOK", "region": "EU",
+                 "country": "Finland", "delegate_count": 10, "typical_wgs": ["RAN2"],
+                 "typical_stance": "collaborative"},
+            ]
+        })
+        mock_llm.chat.completions.create.return_value = self._make_llm_response(llm_json)
+        dist = gen.infer_distribution("some 3gpp document", "NR positioning", 22)
+        assert dist.topic_context == "NR positioning accuracy for Release 18"
+        assert len(dist.companies) == 2
+        assert dist.total_delegates == 22
+        assert "RAN1" in dist.working_groups
+
+    def test_llm_failure_falls_back_to_presets(self):
+        gen, mock_llm = self._make_gen()
+        mock_llm.chat.completions.create.side_effect = Exception("LLM timeout")
+        dist = gen.infer_distribution("doc text", "test req", 30)
+        # Should not raise — falls back to preset distribution
+        assert dist.total_delegates == 30
+        assert len(dist.companies) > 0
