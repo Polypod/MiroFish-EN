@@ -466,6 +466,9 @@ def prepare_simulation():
         entity_types_list = data.get('entity_types')
         use_llm_for_profiles = data.get('use_llm_for_profiles', True)
         parallel_profile_count = data.get('parallel_profile_count', 5)
+        enable_synthetic_delegates = data.get('enable_synthetic_delegates', True)
+        synthetic_delegate_count = data.get('synthetic_delegate_count', 30)
+        synthetic_delegate_config = data.get('synthetic_delegate_config', None)
         
         # ========== Synchronously get entity count (before background task starts) ==========
         # This way the frontend can immediately get the expected total Agent count after calling prepare
@@ -517,10 +520,11 @@ def prepare_simulation():
                 def progress_callback(stage, progress, message, **kwargs):
                     # Calculate total progress
                     stage_weights = {
-                        "reading": (0, 20),           # 0-20%
-                        "generating_profiles": (20, 70),  # 20-70%
-                        "generating_config": (70, 90),    # 70-90%
-                        "copying_scripts": (90, 100)       # 90-100%
+                        "reading": (0, 15),                    # 0-15%
+                        "generating_delegates": (15, 40),      # 15-40%
+                        "generating_profiles": (40, 70),       # 40-70%
+                        "generating_config": (70, 90),         # 70-90%
+                        "copying_scripts": (90, 100)           # 90-100%
                     }
                     
                     start, end = stage_weights.get(stage, (0, 100))
@@ -582,7 +586,10 @@ def prepare_simulation():
                     defined_entity_types=entity_types_list,
                     use_llm_for_profiles=use_llm_for_profiles,
                     progress_callback=progress_callback,
-                    parallel_profile_count=parallel_profile_count
+                    parallel_profile_count=parallel_profile_count,
+                    enable_synthetic_delegates=enable_synthetic_delegates,
+                    synthetic_delegate_count=synthetic_delegate_count,
+                    synthetic_delegate_config=synthetic_delegate_config,
                 )
                 
                 # Task completed
