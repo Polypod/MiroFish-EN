@@ -1,0 +1,240 @@
+{
+  "version": "1.0",
+  "companies": [
+    {
+      "name": "Ericsson",
+      "short_name": "ERX",
+      "region": "EU",
+      "country": "Sweden",
+      "typical_wgs": ["RAN1", "RAN2", "SA2", "CT1"],
+      "typical_stance": "standards-driven, strong on radio access technology",
+      "typical_delegate_share": 0.10
+    },
+    {
+      "name": "Nokia",
+      "short_name": "NOK",
+      "region": "EU",
+      "country": "Finland",
+      "typical_wgs": ["RAN1", "RAN2", "SA1", "SA2"],
+      "typical_stance": "collaborative, broad portfolio across access and core",
+      "typical_delegate_share": 0.09
+    },
+    {
+      "name": "Qualcomm",
+      "short_name": "QCOM",
+      "region": "US",
+      "country": "United States",
+      "typical_wgs": ["RAN1", "RAN2", "SA2"],
+      "typical_stance": "aggressive IPR, strong on physical layer and chipset interests",
+      "typical_delegate_share": 0.08
+    },
+    {
+      "name": "Huawei",
+      "short_name": "HW",
+      "region": "CN",
+      "country": "China",
+      "typical_wgs": ["RAN1", "RAN2", "RAN3", "SA2"],
+      "typical_stance": "prolific contributor, strong on radio and architecture",
+      "typical_delegate_share": 0.10
+    },
+    {
+      "name": "Samsung",
+      "short_name": "SAM",
+      "region": "APAC",
+      "country": "South Korea",
+      "typical_wgs": ["RAN1", "RAN2", "SA1"],
+      "typical_stance": "device-oriented, strong on UE capabilities and features",
+      "typical_delegate_share": 0.07
+    },
+    {
+      "name": "ZTE",
+      "short_name": "ZTE",
+      "region": "CN",
+      "country": "China",
+      "typical_wgs": ["RAN1", "RAN2", "SA2"],
+      "typical_stance": "competitive with Huawei, strong on radio access",
+      "typical_delegate_share": 0.06
+    },
+    {
+      "name": "Intel",
+      "short_name": "INTL",
+      "region": "US",
+      "country": "United States",
+      "typical_wgs": ["RAN1", "SA2", "CT1"],
+      "typical_stance": "chipset and platform focused, pragmatic",
+      "typical_delegate_share": 0.04
+    },
+    {
+      "name": "Apple",
+      "short_name": "APPL",
+      "region": "US",
+      "country": "United States",
+      "typical_wgs": ["RAN2", "SA1", "CT1"],
+      "typical_stance": "device and user experience focused, protective of UE interests",
+      "typical_delegate_share": 0.04
+    },
+    {
+      "name": "MediaTek",
+      "short_name": "MTK",
+      "region": "APAC",
+      "country": "Taiwan",
+      "typical_wgs": ["RAN1", "RAN2"],
+      "typical_stance": "chipset vendor, cost-efficiency focus",
+      "typical_delegate_share": 0.04
+    },
+    {
+      "name": "OPPO",
+      "short_name": "OPP",
+      "region": "CN",
+      "country": "China",
+      "typical_wgs": ["RAN2", "SA1"],
+      "typical_stance": "device manufacturer, feature and UX driven",
+      "typical_delegate_share": 0.04
+    },
+    {
+      "name": "vivo",
+      "short_name": "VIV",
+      "region": "CN",
+      "country": "China",
+      "typical_wgs": ["RAN2", "SA1"],
+      "typical_stance": "device manufacturer, emerging standards contributor",
+      "typical_delegate_share": 0.03
+    },
+    {
+      "name": "Google",
+      "short_name": "GOOG",
+      "region": "US",
+      "country": "United States",
+      "typical_wgs": ["SA1", "SA2", "CT1"],
+      "typical_stance": "cloud and platform focus, open standards advocate",
+      "typical_delegate_share": 0.03
+    },
+    {
+      "name": "AT&T",
+      "short_name": "ATT",
+      "region": "US",
+      "country": "United States",
+      "typical_wgs": ["SA1", "SA2", "RAN3"],
+      "typical_stance": "operator perspective, service and deployment focused",
+      "typical_delegate_share": 0.03
+    },
+    {
+      "name": "T-Mobile",
+      "short_name": "TMO",
+      "region": "US",
+      "country": "United States",
+      "typical_wgs": ["SA1", "RAN2", "RAN3"],
+      "typical_stance": "operator, spectrum and deployment efficiency focus",
+      "typical_delegate_share": 0.02
+    },
+    {
+      "name": "China Mobile",
+      "short_name": "CMCC",
+      "region": "CN",
+      "country": "China",
+      "typical_wgs": ["SA1", "SA2", "RAN3"],
+      "typical_stance": "operator, large-scale deployment and network slicing focus",
+      "typical_delegate_share": 0.04
+    },
+    {
+      "name": "CATT",
+      "short_name": "CATT",
+      "region": "CN",
+      "country": "China",
+      "typical_wgs": ["RAN1", "SA1", "SA2"],
+      "typical_stance": "Chinese research institute, aligned with CN operator interests",
+      "typical_delegate_share": 0.03
+    },
+    {
+      "name": "KDDI",
+      "short_name": "KDDI",
+      "region": "APAC",
+      "country": "Japan",
+      "typical_wgs": ["SA1", "SA2", "RAN2"],
+      "typical_stance": "Japanese operator, service evolution and quality focus",
+      "typical_delegate_share": 0.02
+    },
+    {
+      "name": "NTT DOCOMO",
+      "short_name": "DOCOM",
+      "region": "APAC",
+      "country": "Japan",
+      "typical_wgs": ["SA1", "SA2", "RAN1"],
+      "typical_stance": "Japanese operator, strong on 5G evolution and services",
+      "typical_delegate_share": 0.02
+    },
+    {
+      "name": "Deutsche Telekom",
+      "short_name": "DT",
+      "region": "EU",
+      "country": "Germany",
+      "typical_wgs": ["SA1", "SA2", "RAN3"],
+      "typical_stance": "European operator, network virtualisation and slice focus",
+      "typical_delegate_share": 0.02
+    },
+    {
+      "name": "Orange",
+      "short_name": "ORA",
+      "region": "EU",
+      "country": "France",
+      "typical_wgs": ["SA1", "SA2"],
+      "typical_stance": "European operator, security and privacy advocate",
+      "typical_delegate_share": 0.02
+    },
+    {
+      "name": "Vodafone",
+      "short_name": "VOD",
+      "region": "EU",
+      "country": "UK",
+      "typical_wgs": ["SA1", "SA2", "RAN3"],
+      "typical_stance": "operator, IoT and enterprise 5G focus",
+      "typical_delegate_share": 0.02
+    },
+    {
+      "name": "InterDigital",
+      "short_name": "IDC",
+      "region": "US",
+      "country": "United States",
+      "typical_wgs": ["RAN1", "RAN2"],
+      "typical_stance": "IPR-heavy, strong physical layer research contributor",
+      "typical_delegate_share": 0.02
+    },
+    {
+      "name": "Sharp",
+      "short_name": "SHRP",
+      "region": "APAC",
+      "country": "Japan",
+      "typical_wgs": ["RAN1", "RAN2"],
+      "typical_stance": "device manufacturer, UE feature focused",
+      "typical_delegate_share": 0.01
+    },
+    {
+      "name": "Panasonic",
+      "short_name": "PAN",
+      "region": "APAC",
+      "country": "Japan",
+      "typical_wgs": ["SA3", "CT1"],
+      "typical_stance": "security and IoT device focused",
+      "typical_delegate_share": 0.01
+    },
+    {
+      "name": "LG Electronics",
+      "short_name": "LGE",
+      "region": "APAC",
+      "country": "South Korea",
+      "typical_wgs": ["RAN1", "RAN2", "SA1"],
+      "typical_stance": "device manufacturer, 5G feature and UE capability focus",
+      "typical_delegate_share": 0.01
+    }
+  ],
+  "working_groups": {
+    "RAN1": "Radio layer 1 — physical layer specifications",
+    "RAN2": "Radio layer 2 and 3 — RLC, MAC, RRC protocols",
+    "RAN3": "Radio network architecture — X2/Xn, NG interfaces",
+    "SA1": "Services and system aspects — requirements",
+    "SA2": "System architecture",
+    "SA3": "Security",
+    "CT1": "Core network protocols — NAS, CC",
+    "CT4": "Subscriber data management"
+  }
+}

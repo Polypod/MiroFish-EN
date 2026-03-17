@@ -61,5 +61,7 @@ backend/logs/
 backend/uploads/
 
 # Docker data
-data/
+/data/
 .gitnexus
+
+oasis-main/
