@@ -71,3 +71,166 @@ class SyntheticEntityNode:
     def get_entity_type(self) -> str:
         """Required by SimulationConfigGenerator and OasisProfileGenerator callers."""
         return self.entity_type
+
+
+class SyntheticDelegateGenerator:
+    """Generate synthetic 3GPP delegate profiles for simulation."""
+
+    BATCH_SIZE = 20
+    MAX_PARALLEL = 5
+
+    # Fallback name pool for rule-based generation
+    _FIRST_NAMES = [
+        "Lena", "Thomas", "Yuki", "Carlos", "Mei", "James", "Fatima",
+        "Henrik", "Priya", "Lars", "Sarah", "Wei", "Alex", "Maria", "Jin",
+        "Emma", "David", "Aiko", "Lucas", "Nina", "Oliver", "Hana",
+    ]
+    _LAST_NAMES = [
+        "Berg", "Müller", "Tanaka", "Garcia", "Zhang", "Smith", "Al-Hassan",
+        "Andersen", "Sharma", "Eriksson", "Johnson", "Li", "Novak", "Rossi",
+        "Kim", "Johansson", "Chen", "Fischer", "Okonkwo", "Svensson",
+    ]
+    _MBTI = [
+        "INTJ", "INTP", "ENTJ", "ENTP", "INFJ", "INFP", "ENFJ", "ENFP",
+        "ISTJ", "ISFJ", "ESTJ", "ESFJ", "ISTP", "ISFP", "ESTP", "ESFP",
+    ]
+
+    def __init__(self, llm_client=None):
+        self.company_library = self._load_company_library()
+        self._api_key = Config.LLM_API_KEY
+        self._base_url = Config.LLM_BASE_URL
+        self._model = Config.LLM_MODEL_NAME
+        if llm_client:
+            self._llm = llm_client
+        else:
+            self._llm = OpenAI(api_key=self._api_key, base_url=self._base_url)
+
+    def _load_company_library(self) -> Dict[str, Any]:
+        path = os.path.join(os.path.dirname(__file__), "../data/3gpp_companies.json")
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+
+    # ------------------------------------------------------------------
+    # Distribution building
+    # ------------------------------------------------------------------
+
+    def _build_distribution_from_manual(
+        self,
+        manual_config: Dict[str, Any],
+        total_delegates: int,
+        simulation_requirement: str,
+    ) -> DelegateDistribution:
+        """Validate and convert a manual config dict into a DelegateDistribution."""
+        required = {"name", "delegate_count", "typical_wgs"}
+        companies = []
+        for entry in manual_config.get("companies", []):
+            missing = required - entry.keys()
+            if missing:
+                raise ValueError(f"Company entry missing required field: {missing}")
+            if entry["delegate_count"] <= 0:
+                raise ValueError(
+                    f"delegate_count must be positive, got {entry['delegate_count']} for {entry.get('name')}"
+                )
+            companies.append(
+                CompanySpec(
+                    name=entry["name"],
+                    short_name=entry.get("short_name", entry["name"][:4].upper()),
+                    region=entry.get("region", "EU"),
+                    country=entry.get("country", ""),
+                    delegate_count=entry["delegate_count"],
+                    typical_wgs=entry["typical_wgs"],
+                    typical_stance=entry.get("typical_stance", "neutral"),
+                )
+            )
+        current_sum = sum(c.delegate_count for c in companies)
+        if current_sum != total_delegates and current_sum > 0:
+            companies = self._rescale_counts(companies, total_delegates)
+        all_wgs: List[str] = []
+        for c in companies:
+            for wg in c.typical_wgs:
+                if wg not in all_wgs:
+                    all_wgs.append(wg)
+        return DelegateDistribution(
+            companies=companies,
+            working_groups=all_wgs,
+            topic_context=simulation_requirement,
+            total_delegates=total_delegates,
+        )
+
+    def _build_distribution_from_presets(
+        self, total_delegates: int, topic_context: str
+    ) -> DelegateDistribution:
+        """Build a distribution from the preset library using share weights."""
+        lib_companies = self.company_library["companies"]
+        if total_delegates < 5:
+            sorted_cos = sorted(lib_companies, key=lambda c: c["typical_delegate_share"], reverse=True)
+            selected = sorted_cos[:total_delegates]
+            companies = [
+                CompanySpec(
+                    name=c["name"], short_name=c["short_name"], region=c["region"],
+                    country=c["country"], delegate_count=1,
+                    typical_wgs=c["typical_wgs"], typical_stance=c["typical_stance"],
+                )
+                for c in selected
+            ]
+        else:
+            n_companies = min(total_delegates, len(lib_companies))
+            sorted_cos = sorted(lib_companies, key=lambda c: c["typical_delegate_share"], reverse=True)
+            selected = sorted_cos[:n_companies]
+            companies = [
+                CompanySpec(
+                    name=c["name"], short_name=c["short_name"], region=c["region"],
+                    country=c["country"],
+                    delegate_count=max(1, round(c["typical_delegate_share"] * total_delegates)),
+                    typical_wgs=c["typical_wgs"], typical_stance=c["typical_stance"],
+                )
+                for c in selected
+            ]
+            companies = self._rescale_counts(companies, total_delegates)
+        all_wgs: List[str] = []
+        for c in companies:
+            for wg in c.typical_wgs:
+                if wg not in all_wgs:
+                    all_wgs.append(wg)
+        return DelegateDistribution(
+            companies=companies,
+            working_groups=all_wgs,
+            topic_context=topic_context,
+            total_delegates=total_delegates,
+        )
+
+    @staticmethod
+    def _rescale_counts(companies: List[CompanySpec], target: int) -> List[CompanySpec]:
+        """
+        Rescale delegate_count values proportionally to sum exactly to target.
+        Rounding residuals are added to / subtracted from the company with the
+        highest delegate_count.
+        """
+        current = sum(c.delegate_count for c in companies)
+        if current == 0:
+            return companies
+        scaled = [max(1, round(c.delegate_count / current * target)) for c in companies]
+        diff = target - sum(scaled)
+        # Distribute residual one unit at a time to avoid dropping any company below 1
+        while diff > 0:
+            max_idx = scaled.index(max(scaled))
+            scaled[max_idx] += 1
+            diff -= 1
+        while diff < 0:
+            # Only reduce companies that have more than 1 delegate
+            candidates = [i for i, v in enumerate(scaled) if v > 1]
+            if not candidates:
+                break
+            max_idx = max(candidates, key=lambda i: scaled[i])
+            scaled[max_idx] -= 1
+            diff += 1
+        result = []
+        for i, company in enumerate(companies):
+            result.append(CompanySpec(
+                name=company.name, short_name=company.short_name,
+                region=company.region, country=company.country,
+                delegate_count=scaled[i],
+                typical_wgs=company.typical_wgs,
+                typical_stance=company.typical_stance,
+            ))
+        return result
