@@ -45,6 +45,10 @@ htmlcov/
 .cursor/
 .claude/
 
+# AI assistant instruction files
+CLAUDE.md
+AGENTS.md
+
 # Documentation and test programs
 mydoc/
 mytest/
@@ -58,3 +62,4 @@ backend/uploads/
 
 # Docker data
 data/
+.gitnexus

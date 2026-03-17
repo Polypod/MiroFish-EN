@@ -61,7 +61,7 @@ class LLMClient:
             "max_tokens": max_tokens,
         }
         
-        if response_format:
+        if response_format and Config.LLM_JSON_MODE:
             kwargs["response_format"] = response_format
         
         response = self.client.chat.completions.create(**kwargs)

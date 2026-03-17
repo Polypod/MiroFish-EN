@@ -6,14 +6,16 @@ Load configuration uniformly from the .env file at the project root.
 import os
 from dotenv import load_dotenv
 
-# Load the .env file from the project root
-# Path: MiroFish/.env (relative to backend/app/config.py)
-project_root_env = os.path.join(os.path.dirname(__file__), '../../.env')
+# Load env file from project root — prefer .env.local (local overrides), fall back to .env
+_root = os.path.join(os.path.dirname(__file__), '../..')
+_env_local = os.path.join(_root, '.env.local')
+_env = os.path.join(_root, '.env')
 
-if os.path.exists(project_root_env):
-    load_dotenv(project_root_env, override=True)
+if os.path.exists(_env_local):
+    load_dotenv(_env_local, override=True)
+elif os.path.exists(_env):
+    load_dotenv(_env, override=True)
 else:
-    # If .env does not exist at root, try loading environment variables (for production)
     load_dotenv(override=True)
 
 
@@ -21,8 +23,9 @@ class Config:
     """Flask configuration class."""
     
     # Flask config
-    SECRET_KEY = os.environ.get('SECRET_KEY', 'mirofish-secret-key')
-    DEBUG = os.environ.get('FLASK_DEBUG', 'True').lower() == 'true'
+    SECRET_KEY = os.environ.get('SECRET_KEY')
+    DEBUG = os.environ.get('FLASK_DEBUG', 'False').lower() == 'true'
+    API_KEY = os.environ.get('API_KEY')
     
     # JSON config - disable ASCII escaping so non-ASCII characters display directly
     JSON_AS_ASCII = False
@@ -31,6 +34,8 @@ class Config:
     LLM_API_KEY = os.environ.get('LLM_API_KEY')
     LLM_BASE_URL = os.environ.get('LLM_BASE_URL', 'https://api.openai.com/v1')
     LLM_MODEL_NAME = os.environ.get('LLM_MODEL_NAME', 'gpt-4o-mini')
+    # Set to 'false' for local models (e.g. LM Studio) that don't support response_format
+    LLM_JSON_MODE = os.environ.get('LLM_JSON_MODE', 'true').lower() == 'true'
     
     # Zep config
     ZEP_API_KEY = os.environ.get('ZEP_API_KEY')

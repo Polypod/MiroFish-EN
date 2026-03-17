@@ -9,7 +9,7 @@ import warnings
 # Must be set before all other imports
 warnings.filterwarnings("ignore", message=".*resource_tracker.*")
 
-from flask import Flask, request
+from flask import Flask, request, jsonify
 from flask_cors import CORS
 
 from .config import Config
@@ -48,6 +48,22 @@ def create_app(config_class=Config):
     if should_log_startup:
         logger.info("Simulation process cleanup registered")
     
+    # API key authentication
+    api_key = app.config.get('API_KEY')
+    if not api_key:
+        import warnings
+        warnings.warn("API_KEY is not set — all endpoints are unprotected", stacklevel=2)
+
+    @app.before_request
+    def require_api_key():
+        if not api_key:
+            return
+        # Skip auth for health check
+        if request.path == '/health' or request.method == 'OPTIONS':
+            return
+        if request.headers.get('X-API-Key') != api_key:
+            return jsonify({'success': False, 'error': 'Unauthorized'}), 401
+
     # Request logging middleware
     @app.before_request
     def log_request():
