@@ -8,17 +8,16 @@ Core retrieval tools (optimized):
 3. QuickSearch (simple search) - fast retrieval
 """
 
+import asyncio
 import time
 import json
 from typing import Dict, Any, List, Optional
 from dataclasses import dataclass, field
 
-from zep_cloud.client import Zep
-
-from ..config import Config
 from ..utils.logger import get_logger
 from ..utils.llm_client import LLMClient
-from ..utils.zep_paging import fetch_all_nodes, fetch_all_edges
+from .graphiti_client import GraphitiClientFactory
+from ..utils.graphiti_cypher import fetch_all_nodes, fetch_all_edges, get_node_by_uuid, get_edges_for_node
 
 logger = get_logger('mirofish.zep_tools')
 
@@ -422,11 +421,8 @@ class ZepToolsService:
     RETRY_DELAY = 2.0
     
     def __init__(self, api_key: Optional[str] = None, llm_client: Optional[LLMClient] = None):
-        self.api_key = api_key or Config.ZEP_API_KEY
-        if not self.api_key:
-            raise ValueError("ZEP_API_KEY is not configured")
-        
-        self.client = Zep(api_key=self.api_key)
+        # api_key kept for interface compatibility; unused.
+        self._graphiti = GraphitiClientFactory.get_client()
         # LLM client used to generate InsightForge sub-queries.
         self._llm_client = llm_client
         logger.info("ZepToolsService initialized")
@@ -462,86 +458,62 @@ class ZepToolsService:
         raise last_exception
     
     def search_graph(
-        self, 
-        graph_id: str, 
-        query: str, 
+        self,
+        graph_id: str,
+        query: str,
         limit: int = 10,
         scope: str = "edges"
     ) -> SearchResult:
-        """
-        Graph semantic search.
-
-        Uses hybrid search (semantic + BM25) in the graph.
-        Falls back to local keyword matching if Zep Cloud search is unavailable.
-        
-        Args:
-            graph_id: Graph ID (Standalone Graph)
-            query: Search query
-            limit: Number of results to return
-            scope: Search scope, "edges" or "nodes"
-            
-        Returns:
-            SearchResult: Search result
-        """
+        """Semantic search via Graphiti. Falls back to local keyword search on error."""
         logger.info(f"Graph search: graph_id={graph_id}, query={query[:50]}...")
-        
-        # Try Zep Cloud Search API first.
         try:
-            search_results = self._call_with_retry(
-                func=lambda: self.client.graph.search(
-                    graph_id=graph_id,
-                    query=query,
-                    limit=limit,
-                    scope=scope,
-                    reranker="cross_encoder"
-                ),
-                operation_name=f"graph search (graph={graph_id})"
+            return self._call_with_retry(
+                func=lambda: self._graphiti_search(graph_id, query, limit, scope),
+                operation_name=f"graph search (graph={graph_id})",
             )
-            
-            facts = []
-            edges = []
-            nodes = []
-            
-            # Parse edge search results.
-            if hasattr(search_results, 'edges') and search_results.edges:
-                for edge in search_results.edges:
-                    if hasattr(edge, 'fact') and edge.fact:
-                        facts.append(edge.fact)
+        except Exception as e:
+            logger.warning(f"Graphiti search failed, falling back to local search: {e}")
+            return self._local_search(graph_id, query, limit, scope)
+
+    def _graphiti_search(self, graph_id: str, query: str, limit: int, scope: str) -> SearchResult:
+        """Execute semantic search via Graphiti async API."""
+        async def _search():
+            facts, edges, nodes = [], [], []
+            if scope in ("edges", "both"):
+                edge_results = await self._graphiti.search_(
+                    query=query, group_ids=[graph_id], num_results=limit
+                )
+                for edge in (edge_results or []):
+                    fact = getattr(edge, 'fact', '') or ''
+                    if fact:
+                        facts.append(fact)
                     edges.append({
-                        "uuid": getattr(edge, 'uuid_', None) or getattr(edge, 'uuid', ''),
+                        "uuid": getattr(edge, 'uuid', ''),
                         "name": getattr(edge, 'name', ''),
-                        "fact": getattr(edge, 'fact', ''),
+                        "fact": fact,
                         "source_node_uuid": getattr(edge, 'source_node_uuid', ''),
                         "target_node_uuid": getattr(edge, 'target_node_uuid', ''),
                     })
-            
-            # Parse node search results.
-            if hasattr(search_results, 'nodes') and search_results.nodes:
-                for node in search_results.nodes:
+            if scope in ("nodes", "both"):
+                node_results = await self._graphiti.get_nodes_by_query(
+                    query=query, group_ids=[graph_id], num_results=limit
+                )
+                for node in (node_results or []):
+                    summary = getattr(node, 'summary', '') or ''
+                    name = getattr(node, 'name', '') or ''
                     nodes.append({
-                        "uuid": getattr(node, 'uuid_', None) or getattr(node, 'uuid', ''),
-                        "name": getattr(node, 'name', ''),
+                        "uuid": getattr(node, 'uuid', ''),
+                        "name": name,
                         "labels": getattr(node, 'labels', []),
-                        "summary": getattr(node, 'summary', ''),
+                        "summary": summary,
                     })
-                    # Node summary is also treated as a fact.
-                    if hasattr(node, 'summary') and node.summary:
-                        facts.append(f"[{node.name}]: {node.summary}")
-            
-            logger.info(f"Search completed: found {len(facts)} related facts")
-            
-            return SearchResult(
-                facts=facts,
-                edges=edges,
-                nodes=nodes,
-                query=query,
-                total_count=len(facts)
-            )
-            
-        except Exception as e:
-            logger.warning(f"Zep Search API failed, falling back to local search: {str(e)}")
-            # Fallback: local keyword matching search.
-            return self._local_search(graph_id, query, limit, scope)
+                    if summary:
+                        facts.append(f"[{name}]: {summary}")
+            return facts, edges, nodes
+
+        facts, edges, nodes = asyncio.run(_search())
+        return SearchResult(facts=facts, edges=edges, nodes=nodes, query=query,
+                            total_count=len(facts))
     
     def _local_search(
         self, 
@@ -658,20 +630,17 @@ class ZepToolsService:
             Node list
         """
         logger.info(f"Fetching all nodes for graph {graph_id}...")
-
-        nodes = fetch_all_nodes(self.client, graph_id)
-
-        result = []
-        for node in nodes:
-            node_uuid = getattr(node, 'uuid_', None) or getattr(node, 'uuid', None) or ""
-            result.append(NodeInfo(
-                uuid=str(node_uuid) if node_uuid else "",
-                name=node.name or "",
-                labels=node.labels or [],
-                summary=node.summary or "",
-                attributes=node.attributes or {}
-            ))
-
+        raw = fetch_all_nodes(self._graphiti.driver, graph_id)
+        result = [
+            NodeInfo(
+                uuid=r.get("uuid", ""),
+                name=r.get("name", ""),
+                labels=r.get("labels_list", []),
+                summary=r.get("summary", ""),
+                attributes={},
+            )
+            for r in raw
+        ]
         logger.info(f"Fetched {len(result)} nodes")
         return result
 
@@ -687,94 +656,85 @@ class ZepToolsService:
             Edge list (including created_at, valid_at, invalid_at, expired_at)
         """
         logger.info(f"Fetching all edges for graph {graph_id}...")
-
-        edges = fetch_all_edges(self.client, graph_id)
-
+        raw = fetch_all_edges(self._graphiti.driver, graph_id)
         result = []
-        for edge in edges:
-            edge_uuid = getattr(edge, 'uuid_', None) or getattr(edge, 'uuid', None) or ""
-            edge_info = EdgeInfo(
-                uuid=str(edge_uuid) if edge_uuid else "",
-                name=edge.name or "",
-                fact=edge.fact or "",
-                source_node_uuid=edge.source_node_uuid or "",
-                target_node_uuid=edge.target_node_uuid or ""
+        for r in raw:
+            ei = EdgeInfo(
+                uuid=r.get("uuid", ""),
+                name=r.get("name", ""),
+                fact=r.get("fact", ""),
+                source_node_uuid=r.get("source_node_uuid", ""),
+                target_node_uuid=r.get("target_node_uuid", ""),
             )
-
-            # Add temporal metadata.
             if include_temporal:
-                edge_info.created_at = getattr(edge, 'created_at', None)
-                edge_info.valid_at = getattr(edge, 'valid_at', None)
-                edge_info.invalid_at = getattr(edge, 'invalid_at', None)
-                edge_info.expired_at = getattr(edge, 'expired_at', None)
-
-            result.append(edge_info)
-
+                ei.created_at = r.get("created_at")
+                ei.valid_at = r.get("valid_at")
+                ei.invalid_at = r.get("invalid_at")
+                ei.expired_at = r.get("expired_at")
+            result.append(ei)
         logger.info(f"Fetched {len(result)} edges")
         return result
     
     def get_node_detail(self, node_uuid: str) -> Optional[NodeInfo]:
         """
         Get details for a single node.
-        
+
         Args:
             node_uuid: Node UUID
-            
+
         Returns:
             Node info or None
         """
         logger.info(f"Fetching node details: {node_uuid[:8]}...")
-        
         try:
-            node = self._call_with_retry(
-                func=lambda: self.client.graph.node.get(uuid_=node_uuid),
-                operation_name=f"get node detail (uuid={node_uuid[:8]}...)"
+            raw = self._call_with_retry(
+                func=lambda: get_node_by_uuid(self._graphiti.driver, node_uuid),
+                operation_name=f"get node detail (uuid={node_uuid[:8]}...)",
             )
-            
-            if not node:
+            if not raw:
                 return None
-            
             return NodeInfo(
-                uuid=getattr(node, 'uuid_', None) or getattr(node, 'uuid', ''),
-                name=node.name or "",
-                labels=node.labels or [],
-                summary=node.summary or "",
-                attributes=node.attributes or {}
+                uuid=raw.get("uuid", ""),
+                name=raw.get("name", ""),
+                labels=raw.get("labels_list", []),
+                summary=raw.get("summary", ""),
+                attributes={},
             )
         except Exception as e:
-            logger.error(f"Failed to get node details: {str(e)}")
+            logger.error(f"get_node_detail failed: {e}")
             return None
     
     def get_node_edges(self, graph_id: str, node_uuid: str) -> List[EdgeInfo]:
         """
         Get all edges related to a node.
 
-        Fetches all graph edges first, then filters by node UUID.
-        
         Args:
-            graph_id: Graph ID
+            graph_id: Graph ID (kept for interface compatibility)
             node_uuid: Node UUID
-            
+
         Returns:
             Edge list
         """
         logger.info(f"Fetching related edges for node {node_uuid[:8]}...")
-        
         try:
-            # Fetch all graph edges, then filter.
-            all_edges = self.get_all_edges(graph_id)
-            
-            result = []
-            for edge in all_edges:
-                # Check whether the edge is related to this node (source or target).
-                if edge.source_node_uuid == node_uuid or edge.target_node_uuid == node_uuid:
-                    result.append(edge)
-            
+            raw = self._call_with_retry(
+                func=lambda: get_edges_for_node(self._graphiti.driver, node_uuid),
+                operation_name=f"get node edges (node={node_uuid[:8]}...)",
+            )
+            result = [
+                EdgeInfo(
+                    uuid=r.get("uuid", ""),
+                    name=r.get("name", ""),
+                    fact=r.get("fact", ""),
+                    source_node_uuid=r.get("source_node_uuid", ""),
+                    target_node_uuid=r.get("target_node_uuid", ""),
+                )
+                for r in raw
+            ]
             logger.info(f"Found {len(result)} edges related to the node")
             return result
-            
         except Exception as e:
-            logger.warning(f"Failed to get node edges: {str(e)}")
+            logger.warning(f"get_node_edges failed: {e}")
             return []
     
     def get_entities_by_type(
