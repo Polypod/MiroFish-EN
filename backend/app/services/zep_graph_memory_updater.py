@@ -245,21 +245,22 @@ class ZepGraphMemoryUpdater:
                 try:
                     activity = self._activity_queue.get(timeout=1)
                     platform = activity.platform.lower()
+                    batch_to_send = None
                     with self._buffer_lock:
                         if platform not in self._platform_buffers:
                             self._platform_buffers[platform] = []
                         self._platform_buffers[platform].append(activity)
                         if len(self._platform_buffers[platform]) >= self.BATCH_SIZE:
-                            batch = self._platform_buffers[platform][:self.BATCH_SIZE]
+                            batch_to_send = self._platform_buffers[platform][:self.BATCH_SIZE]
                             self._platform_buffers[platform] = self._platform_buffers[platform][self.BATCH_SIZE:]
-                            self._send_batch_activities(batch, platform)
-                            time.sleep(self.SEND_INTERVAL)
+                    if batch_to_send:
+                        self._send_batch_activities(batch_to_send, platform)
+                        time.sleep(self.SEND_INTERVAL)
                 except Empty:
                     pass
             except Exception as e:
                 logger.error(f"Worker loop exception: {e}")
-                import time as t
-                t.sleep(1)
+                time.sleep(1)
 
     def _send_batch_activities(self, activities: List[AgentActivity], platform: str):
         import time
