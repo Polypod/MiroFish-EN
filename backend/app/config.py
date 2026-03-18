@@ -37,8 +37,13 @@ class Config:
     # Set to 'false' for local models (e.g. LM Studio) that don't support response_format
     LLM_JSON_MODE = os.environ.get('LLM_JSON_MODE', 'true').lower() == 'true'
     
-    # Zep config
-    ZEP_API_KEY = os.environ.get('ZEP_API_KEY')
+    # Graphiti / Neo4j config
+    NEO4J_URI = os.environ.get('NEO4J_URI', 'bolt://localhost:7687')
+    NEO4J_USER = os.environ.get('NEO4J_USER', 'neo4j')
+    NEO4J_PASSWORD = os.environ.get('NEO4J_PASSWORD')
+    GRAPHITI_EMBED_BASE_URL = os.environ.get('GRAPHITI_EMBED_BASE_URL', 'http://localhost:1234/v1')
+    GRAPHITI_EMBED_MODEL = os.environ.get('GRAPHITI_EMBED_MODEL', 'mlx-community/Qwen3-Embedding-4B-mxfp8')
+    GRAPHITI_EMBED_API_KEY = os.environ.get('GRAPHITI_EMBED_API_KEY', 'lm-studio')
     
     # File upload config
     MAX_CONTENT_LENGTH = 50 * 1024 * 1024  # 50MB
@@ -74,7 +79,11 @@ class Config:
         errors = []
         if not cls.LLM_API_KEY:
             errors.append("LLM_API_KEY is not configured")
-        if not cls.ZEP_API_KEY:
-            errors.append("ZEP_API_KEY is not configured")
+        if not cls.NEO4J_URI:
+            errors.append("NEO4J_URI is not configured")
+        if not cls.NEO4J_PASSWORD:
+            errors.append("NEO4J_PASSWORD is not configured")
+        if not cls.GRAPHITI_EMBED_BASE_URL:
+            errors.append("GRAPHITI_EMBED_BASE_URL is not configured")
         return errors
 

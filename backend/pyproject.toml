@@ -16,8 +16,8 @@ dependencies = [
     # LLM related
     "openai>=1.0.0",
     
-    # Zep Cloud
-    "zep-cloud==3.13.0",
+    # Graphiti / Neo4j memory graph
+    "graphiti-core>=0.3",
     
     # OASIS social media simulation
     "camel-oasis==0.2.5",
