@@ -402,7 +402,7 @@ def build_graph():
                 # Create graph
                 task_manager.update_task(
                     task_id,
-                    message="Creating Zep graph...",
+                    message="Creating graph...",
                     progress=10
                 )
                 graph_id = builder.create_graph(name=graph_name)
@@ -444,7 +444,7 @@ def build_graph():
                 # Wait for Zep processing to complete (check each episode's processed status)
                 task_manager.update_task(
                     task_id,
-                    message="Waiting for Zep to process data...",
+                    message="Processing episodes...",
                     progress=55
                 )
                 

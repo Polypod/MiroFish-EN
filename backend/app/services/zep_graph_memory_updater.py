@@ -308,13 +308,17 @@ class ZepGraphMemoryUpdater:
                     self._platform_buffers[platform].append(activity)
             except Empty:
                 break
+        batches_to_send = {}
         with self._buffer_lock:
             for platform, buffer in self._platform_buffers.items():
                 if buffer:
-                    logger.info(f"Flushing {len(buffer)} activities for {self._get_platform_display_name(platform)}")
-                    self._send_batch_activities(buffer, platform)
+                    batches_to_send[platform] = list(buffer)
             for platform in self._platform_buffers:
                 self._platform_buffers[platform] = []
+
+        for platform, batch in batches_to_send.items():
+            logger.info(f"Flushing {len(batch)} activities for {self._get_platform_display_name(platform)}")
+            self._send_batch_activities(batch, platform)
 
     def get_stats(self) -> Dict[str, Any]:
         with self._buffer_lock:
