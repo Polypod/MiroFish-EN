@@ -4,7 +4,7 @@ Graphiti bulk retrieval utilities.
 Fetches all nodes/edges for a group using keyset pagination via Neo4j Cypher.
 Replaces zep_paging.py.
 
-IMPORTANT: The node label (:EntityNode) and property names below were verified
+IMPORTANT: The node label (:Entity) and property names below were verified
 against the actual Neo4j schema. If the schema differs, update the MATCH clauses.
 """
 
@@ -30,9 +30,9 @@ async def _fetch_nodes_page(
     page_size: int,
 ) -> List[Dict[str, Any]]:
     """Fetch one page of entity nodes using keyset pagination."""
-    # Adjust :EntityNode and n.group_id if your schema uses different names.
+    # Adjust :Entity and n.group_id if your schema uses different names.
     cypher = """
-    MATCH (n:EntityNode)
+    MATCH (n:Entity)
     WHERE n.group_id = $group_id
       AND ($cursor IS NULL OR n.uuid > $cursor)
     RETURN n.uuid AS uuid,
@@ -61,7 +61,7 @@ async def _fetch_edges_page(
 ) -> List[Dict[str, Any]]:
     """Fetch one page of RELATES_TO edges using keyset pagination."""
     cypher = """
-    MATCH (s:EntityNode)-[r:RELATES_TO]->(t:EntityNode)
+    MATCH (s:Entity)-[r:RELATES_TO]->(t:Entity)
     WHERE r.group_id = $group_id
       AND ($cursor IS NULL OR r.uuid > $cursor)
     RETURN r.uuid AS uuid,
@@ -88,7 +88,7 @@ async def _fetch_edges_page(
 
 async def _get_node_by_uuid(driver, node_uuid: str) -> Optional[Dict[str, Any]]:
     cypher = """
-    MATCH (n:EntityNode {uuid: $uuid})
+    MATCH (n:Entity {uuid: $uuid})
     RETURN n.uuid AS uuid, n.name AS name, n.summary AS summary,
            labels(n) AS labels_list
     LIMIT 1
@@ -101,7 +101,7 @@ async def _get_node_by_uuid(driver, node_uuid: str) -> Optional[Dict[str, Any]]:
 
 async def _get_edges_for_node(driver, node_uuid: str) -> List[Dict[str, Any]]:
     cypher = """
-    MATCH (n:EntityNode {uuid: $uuid})-[r:RELATES_TO]-(m:EntityNode)
+    MATCH (n:Entity {uuid: $uuid})-[r:RELATES_TO]-(m:Entity)
     RETURN r.uuid AS uuid, r.name AS name, r.fact AS fact,
            startNode(r).uuid AS source_node_uuid,
            endNode(r).uuid AS target_node_uuid
@@ -183,7 +183,7 @@ def delete_group(driver, group_id: str) -> None:
     """Delete all nodes and edges for a group_id."""
     async def _delete():
         await driver.execute_query(
-            "MATCH (n:EntityNode) WHERE n.group_id = $group_id DETACH DELETE n",
+            "MATCH (n:Entity) WHERE n.group_id = $group_id DETACH DELETE n",
             group_id=group_id,
         )
         await driver.execute_query(

@@ -202,7 +202,7 @@ class GraphBuilderService:
         entity_types = set()
         for node in nodes:
             for label in node.get("labels_list", []):
-                if label not in {"EntityNode", "Entity", "Node"}:
+                if label not in {"Entity", "Node"}:
                     entity_types.add(label)
         return GraphInfo(
             graph_id=graph_id,
