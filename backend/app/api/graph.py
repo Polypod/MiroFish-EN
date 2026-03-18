@@ -286,14 +286,14 @@ def build_graph():
         
         # Validate configuration
         errors = []
-        if not Config.ZEP_API_KEY:
-            errors.append("ZEP_API_KEY is not configured")
+        if not Config.NEO4J_PASSWORD:
+            errors.append("NEO4J_PASSWORD is not configured")
         if errors:
             logger.error(f"Configuration error: {errors}")
             return jsonify({
                 "success": False,
                 "error": "Configuration error: " + "; ".join(errors)
-            }), 500
+            }), 503
         
         # Parse request
         data = request.get_json() or {}
@@ -384,7 +384,7 @@ def build_graph():
                 )
                 
                 # Create graph builder service
-                builder = GraphBuilderService(api_key=Config.ZEP_API_KEY)
+                builder = GraphBuilderService(api_key=Config.NEO4J_PASSWORD)
                 
                 # Split into chunks
                 task_manager.update_task(
@@ -569,13 +569,13 @@ def get_graph_data(graph_id: str):
     Get graph data (nodes and edges).
     """
     try:
-        if not Config.ZEP_API_KEY:
+        if not Config.NEO4J_PASSWORD:
             return jsonify({
                 "success": False,
-                "error": "ZEP_API_KEY is not configured"
-            }), 500
-        
-        builder = GraphBuilderService(api_key=Config.ZEP_API_KEY)
+                "error": "NEO4J_PASSWORD is not configured"
+            }), 503
+
+        builder = GraphBuilderService(api_key=Config.NEO4J_PASSWORD)
         graph_data = builder.get_graph_data(graph_id)
         
         return jsonify({
@@ -597,13 +597,13 @@ def delete_graph(graph_id: str):
     Delete Zep graph.
     """
     try:
-        if not Config.ZEP_API_KEY:
+        if not Config.NEO4J_PASSWORD:
             return jsonify({
                 "success": False,
-                "error": "ZEP_API_KEY is not configured"
-            }), 500
-        
-        builder = GraphBuilderService(api_key=Config.ZEP_API_KEY)
+                "error": "NEO4J_PASSWORD is not configured"
+            }), 503
+
+        builder = GraphBuilderService(api_key=Config.NEO4J_PASSWORD)
         builder.delete_graph(graph_id)
         
         return jsonify({
