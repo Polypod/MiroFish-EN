@@ -31,9 +31,9 @@ def _make_edge(uuid, name, fact, src, tgt):
 class TestZepEntityReader:
     def test_filter_defined_entities_skips_plain_entity_nodes(self):
         """Nodes with only default labels are excluded."""
-        with patch("backend.app.services.zep_entity_reader.fetch_all_nodes") as mock_nodes, \
-             patch("backend.app.services.zep_entity_reader.fetch_all_edges") as mock_edges, \
-             patch("backend.app.services.zep_entity_reader.GraphitiClientFactory") as mock_factory:
+        with patch("backend.app.services._backends.graphiti.entity_reader.fetch_all_nodes") as mock_nodes, \
+             patch("backend.app.services._backends.graphiti.entity_reader.fetch_all_edges") as mock_edges, \
+             patch("backend.app.services._backends.graphiti.entity_reader.GraphitiClientFactory") as mock_factory:
 
             mock_graphiti = MagicMock()
             mock_factory.get_client.return_value = mock_graphiti

@@ -22,7 +22,7 @@ class TestAgentActivity:
 
     def test_add_activity_skips_do_nothing(self):
         from backend.app.services.zep_graph_memory_updater import ZepGraphMemoryUpdater, AgentActivity
-        with patch("backend.app.services.zep_graph_memory_updater.GraphitiClientFactory"):
+        with patch("backend.app.services._backends.graphiti.memory_updater.GraphitiClientFactory"):
             updater = ZepGraphMemoryUpdater.__new__(ZepGraphMemoryUpdater)
             updater._skipped_count = 0
             updater._activity_queue = MagicMock()
