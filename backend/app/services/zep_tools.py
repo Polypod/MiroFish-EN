@@ -704,13 +704,13 @@ class ZepToolsService:
             logger.error(f"get_node_detail failed: {e}")
             return None
     
-    def get_node_edges(self, graph_id: str, node_uuid: str) -> List[EdgeInfo]:
+    def get_node_edges(self, node_uuid: str, graph_id: str) -> List[EdgeInfo]:
         """
         Get all edges related to a node.
 
         Args:
-            graph_id: Graph ID (kept for interface compatibility)
             node_uuid: Node UUID
+            graph_id: Graph ID (kept for interface compatibility)
 
         Returns:
             Edge list
@@ -801,8 +801,8 @@ class ZepToolsService:
         
         related_edges = []
         if entity_node:
-            # Pass graph_id parameter.
-            related_edges = self.get_node_edges(graph_id, entity_node.uuid)
+            # Pass node_uuid first, then graph_id parameter.
+            related_edges = self.get_node_edges(entity_node.uuid, graph_id)
         
         return {
             "entity_name": entity_name,
