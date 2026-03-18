@@ -83,15 +83,14 @@ class Config:
         errors = []
         if not cls.LLM_API_KEY:
             errors.append("LLM_API_KEY is not configured")
+        if cls.MEMORY_BACKEND not in ('graphiti', 'zep'):
+            errors.append(f"MEMORY_BACKEND must be 'graphiti' or 'zep', got: {cls.MEMORY_BACKEND!r}")
+            return errors
         if cls.MEMORY_BACKEND == 'zep':
             if not cls.ZEP_API_KEY:
                 errors.append("ZEP_API_KEY is not configured (required when MEMORY_BACKEND=zep)")
         else:
-            if not cls.NEO4J_URI:
-                errors.append("NEO4J_URI is not configured")
             if not cls.NEO4J_PASSWORD:
                 errors.append("NEO4J_PASSWORD is not configured")
-            if not cls.GRAPHITI_EMBED_BASE_URL:
-                errors.append("GRAPHITI_EMBED_BASE_URL is not configured")
         return errors
 
