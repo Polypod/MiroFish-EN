@@ -1,21 +1,64 @@
 """
 Graphiti client factory.
 Thread-safe singleton — creates the Graphiti client once and caches it.
+
+All async Graphiti calls must go through `run_async()` so they execute on the
+single shared event loop that the Graphiti client (and its Neo4j driver) was
+created on.  Mixing `asyncio.run()` across threads creates different event
+loops, which causes "Future attached to a different loop" errors.
 """
 
 import asyncio
+import concurrent.futures
 import threading
 
 from graphiti_core import Graphiti
 from graphiti_core.llm_client.openai_client import OpenAIClient, LLMConfig
 from graphiti_core.embedder.openai import OpenAIEmbedder, OpenAIEmbedderConfig
+from graphiti_core.cross_encoder.openai_reranker_client import OpenAIRerankerClient
 
 from ..config import Config
 from ..utils.logger import get_logger
 
 logger = get_logger('mirofish.graphiti_client')
 
-_lock = threading.Lock()
+# ---------------------------------------------------------------------------
+# Shared persistent event loop
+# ---------------------------------------------------------------------------
+_event_loop: asyncio.AbstractEventLoop | None = None
+_loop_thread: threading.Thread | None = None
+_loop_lock = threading.Lock()
+
+
+def _get_event_loop() -> asyncio.AbstractEventLoop:
+    """Return the shared background event loop, starting it on first call."""
+    global _event_loop, _loop_thread
+    if _event_loop is not None and _event_loop.is_running():
+        return _event_loop
+    with _loop_lock:
+        if _event_loop is not None and _event_loop.is_running():
+            return _event_loop
+        _event_loop = asyncio.new_event_loop()
+        _loop_thread = threading.Thread(target=_event_loop.run_forever, daemon=True)
+        _loop_thread.start()
+        logger.debug("Graphiti background event loop started")
+        return _event_loop
+
+
+def run_async(coro):
+    """
+    Run *coro* on the shared Graphiti event loop and block until it completes.
+    Safe to call from any thread (including the Flask request thread).
+    """
+    loop = _get_event_loop()
+    future = asyncio.run_coroutine_threadsafe(coro, loop)
+    return future.result()
+
+
+# ---------------------------------------------------------------------------
+# Client factory
+# ---------------------------------------------------------------------------
+_client_lock = threading.Lock()
 
 
 class GraphitiClientFactory:
@@ -29,8 +72,8 @@ class GraphitiClientFactory:
         if cls._instance is not None:
             return cls._instance
 
-        with _lock:
-            if cls._instance is not None:  # double-checked locking
+        with _client_lock:
+            if cls._instance is not None:
                 return cls._instance
 
             cls._instance = cls._create_client()
@@ -38,18 +81,9 @@ class GraphitiClientFactory:
 
     @classmethod
     def _create_client(cls) -> Graphiti:
-        """Instantiate and initialize the Graphiti client."""
-        missing = []
-        if not Config.NEO4J_URI:
-            missing.append("NEO4J_URI")
+        """Instantiate and initialize the Graphiti client on the shared loop."""
         if not Config.NEO4J_PASSWORD:
-            missing.append("NEO4J_PASSWORD")
-        if not Config.GRAPHITI_EMBED_BASE_URL:
-            missing.append("GRAPHITI_EMBED_BASE_URL")
-        if missing:
-            raise RuntimeError(
-                f"Graphiti client cannot initialize — missing config: {', '.join(missing)}"
-            )
+            raise RuntimeError("Graphiti client cannot initialize — NEO4J_PASSWORD is not set")
 
         llm_client = OpenAIClient(
             config=LLMConfig(
@@ -67,19 +101,34 @@ class GraphitiClientFactory:
             )
         )
 
+        cross_encoder = OpenAIRerankerClient(
+            config=LLMConfig(
+                api_key=Config.LLM_API_KEY,
+                base_url=Config.LLM_BASE_URL,
+            )
+        )
+
+        # Build the Graphiti instance *inside* the shared loop so the Neo4j
+        # async driver is bound to it from the start.
+        loop = _get_event_loop()
+        future = asyncio.run_coroutine_threadsafe(
+            cls._init_graphiti(llm_client, embedder, cross_encoder), loop
+        )
+        return future.result()
+
+    @staticmethod
+    async def _init_graphiti(llm_client, embedder, cross_encoder) -> Graphiti:
         graphiti = Graphiti(
             uri=Config.NEO4J_URI,
             user=Config.NEO4J_USER,
             password=Config.NEO4J_PASSWORD,
             llm_client=llm_client,
             embedder=embedder,
+            cross_encoder=cross_encoder,
         )
-
-        # Create Neo4j indexes on first init.
         try:
-            asyncio.run(graphiti.build_indices_and_constraints())
+            await graphiti.build_indices_and_constraints()
             logger.info("Graphiti client initialized, Neo4j indexes verified")
         except Exception as e:
             logger.warning(f"Could not build Neo4j indexes (may already exist): {e}")
-
         return graphiti

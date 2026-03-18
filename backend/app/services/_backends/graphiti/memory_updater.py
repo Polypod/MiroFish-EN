@@ -16,7 +16,7 @@ from queue import Queue, Empty
 from graphiti_core.nodes import EpisodeType
 
 from ....utils.logger import get_logger
-from ...graphiti_client import GraphitiClientFactory
+from ...graphiti_client import GraphitiClientFactory, run_async
 
 logger = get_logger('mirofish.zep_graph_memory_updater')
 
@@ -282,7 +282,7 @@ class ZepGraphMemoryUpdater:
 
         for attempt in range(self.MAX_RETRIES):
             try:
-                asyncio.run(_add())
+                run_async(_add())
                 self._total_sent += 1
                 self._total_items_sent += len(activities)
                 logger.info(

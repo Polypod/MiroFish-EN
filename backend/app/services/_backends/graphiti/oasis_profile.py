@@ -21,7 +21,7 @@ from openai import OpenAI
 from ....config import Config
 from ....utils.logger import get_logger, log_llm_interaction
 from .entity_reader import EntityNode, ZepEntityReader
-from ...graphiti_client import GraphitiClientFactory
+from ...graphiti_client import GraphitiClientFactory, run_async
 
 logger = get_logger('mirofish.oasis_profile')
 
@@ -320,7 +320,7 @@ class OasisProfileGenerator:
             delay = 2.0
             for attempt in range(max_retries):
                 try:
-                    return asyncio.run(_search())
+                    return run_async(_search())
                 except Exception as e:
                     if attempt < max_retries - 1:
                         import time
@@ -343,7 +343,7 @@ class OasisProfileGenerator:
             delay = 2.0
             for attempt in range(max_retries):
                 try:
-                    return asyncio.run(_search())
+                    return run_async(_search())
                 except Exception as e:
                     if attempt < max_retries - 1:
                         import time

@@ -8,7 +8,6 @@ Drop-in replacement for the former Zep-based GraphBuilderService.
 import uuid
 import time
 import threading
-import asyncio
 from typing import Any, Callable, Dict, List, Optional
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -18,7 +17,7 @@ from graphiti_core.nodes import EpisodeType
 from ....utils.logger import get_logger
 from ....utils.graphiti_cypher import fetch_all_nodes, fetch_all_edges, delete_group
 from ....models.task import TaskManager, TaskStatus
-from ...graphiti_client import GraphitiClientFactory
+from ...graphiti_client import GraphitiClientFactory, run_async
 from ...text_processor import TextProcessor
 
 logger = get_logger('mirofish.graph_builder')
@@ -167,7 +166,7 @@ class GraphBuilderService:
 
             ts = int(datetime.now().timestamp())
             try:
-                asyncio.run(self._graphiti.add_episode(
+                run_async(self._graphiti.add_episode(
                     name=f"doc_chunk_{i:04d}_{ts}",
                     episode_body=chunk,
                     source_description="uploaded document",

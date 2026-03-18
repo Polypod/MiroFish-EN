@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 
 from ....utils.logger import get_logger
 from ....utils.llm_client import LLMClient
-from ...graphiti_client import GraphitiClientFactory
+from ...graphiti_client import GraphitiClientFactory, run_async
 from ....utils.graphiti_cypher import fetch_all_nodes, fetch_all_edges, get_node_by_uuid, get_edges_for_node
 
 logger = get_logger('mirofish.zep_tools')
@@ -511,7 +511,7 @@ class ZepToolsService:
                         facts.append(f"[{name}]: {summary}")
             return facts, edges, nodes
 
-        facts, edges, nodes = asyncio.run(_search())
+        facts, edges, nodes = run_async(_search())
         return SearchResult(facts=facts, edges=edges, nodes=nodes, query=query,
                             total_count=len(facts))
     

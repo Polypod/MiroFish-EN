@@ -8,10 +8,10 @@ IMPORTANT: The node label (:EntityNode) and property names below were verified
 against the actual Neo4j schema. If the schema differs, update the MATCH clauses.
 """
 
-import asyncio
 from typing import Any, Dict, List, Optional
 
 from .logger import get_logger
+from ..services.graphiti_client import run_async
 
 logger = get_logger('mirofish.graphiti_cypher')
 
@@ -141,7 +141,7 @@ def fetch_all_nodes(
             cursor = batch[-1]["uuid"]
         return all_nodes
 
-    return asyncio.run(_fetch())
+    return run_async(_fetch())
 
 
 def fetch_all_edges(
@@ -166,17 +166,17 @@ def fetch_all_edges(
             cursor = batch[-1]["uuid"]
         return all_edges
 
-    return asyncio.run(_fetch())
+    return run_async(_fetch())
 
 
 def get_node_by_uuid(driver, node_uuid: str) -> Optional[Dict[str, Any]]:
     """Fetch a single node by UUID."""
-    return asyncio.run(_get_node_by_uuid(driver, node_uuid))
+    return run_async(_get_node_by_uuid(driver, node_uuid))
 
 
 def get_edges_for_node(driver, node_uuid: str) -> List[Dict[str, Any]]:
     """Fetch all edges connected to a node."""
-    return asyncio.run(_get_edges_for_node(driver, node_uuid))
+    return run_async(_get_edges_for_node(driver, node_uuid))
 
 
 def delete_group(driver, group_id: str) -> None:
@@ -190,4 +190,4 @@ def delete_group(driver, group_id: str) -> None:
             "MATCH ()-[r:RELATES_TO]->() WHERE r.group_id = $group_id DELETE r",
             group_id=group_id,
         )
-    asyncio.run(_delete())
+    run_async(_delete())
