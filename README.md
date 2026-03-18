@@ -19,7 +19,7 @@ The simulation engine is powered by **[OASIS (Open Agent Social Interaction Simu
 
 ## 🔄 Workflow
 
-1. **Graph Building** — Upload documents, extract entities, build a Zep knowledge graph
+1. **Graph Building** — Upload documents, extract entities, build a Graphiti knowledge graph (backed by Neo4j)
 2. **Simulation Prep** — Generate agent personas, add synthetic delegates, produce agent config
 3. **Simulation** — Run dual-platform (Reddit/Twitter mode) multi-agent simulation via OASIS
 4. **Report** — Interact with a ReportAgent and individual simulation agents post-run
@@ -93,7 +93,17 @@ LLM_BASE_URL=https://openrouter.ai/api/v1   # or any OpenAI-compatible endpoint
 LLM_MODEL_NAME=openai/gpt-4o-mini
 LLM_JSON_MODE=true                           # set false for local models
 
-ZEP_API_KEY=your_zep_key                     # optional in synthetic-only mode
+NEO4J_URI=bolt://localhost:7687
+NEO4J_USER=neo4j
+NEO4J_PASSWORD=your-neo4j-password
+
+GRAPHITI_EMBED_BASE_URL=http://localhost:1234/v1   # LM Studio or compatible
+GRAPHITI_EMBED_MODEL=mlx-community/Qwen3-Embedding-4B-mxfp8
+GRAPHITI_EMBED_API_KEY=lm-studio
+
+# Optional: switch to Zep Cloud instead of Graphiti
+# MEMORY_BACKEND=zep
+# ZEP_API_KEY=your_zep_api_key
 
 API_KEY=your_api_key
 VITE_API_KEY=your_api_key

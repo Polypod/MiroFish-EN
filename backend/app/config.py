@@ -44,7 +44,11 @@ class Config:
     GRAPHITI_EMBED_BASE_URL = os.environ.get('GRAPHITI_EMBED_BASE_URL', 'http://localhost:1234/v1')
     GRAPHITI_EMBED_MODEL = os.environ.get('GRAPHITI_EMBED_MODEL', 'mlx-community/Qwen3-Embedding-4B-mxfp8')
     GRAPHITI_EMBED_API_KEY = os.environ.get('GRAPHITI_EMBED_API_KEY', 'lm-studio')
-    
+
+    # Memory backend selection
+    MEMORY_BACKEND = os.environ.get('MEMORY_BACKEND', 'graphiti')  # 'graphiti' or 'zep'
+    ZEP_API_KEY = os.environ.get('ZEP_API_KEY')
+
     # File upload config
     MAX_CONTENT_LENGTH = 50 * 1024 * 1024  # 50MB
     UPLOAD_FOLDER = os.path.join(os.path.dirname(__file__), '../uploads')
@@ -79,11 +83,15 @@ class Config:
         errors = []
         if not cls.LLM_API_KEY:
             errors.append("LLM_API_KEY is not configured")
-        if not cls.NEO4J_URI:
-            errors.append("NEO4J_URI is not configured")
-        if not cls.NEO4J_PASSWORD:
-            errors.append("NEO4J_PASSWORD is not configured")
-        if not cls.GRAPHITI_EMBED_BASE_URL:
-            errors.append("GRAPHITI_EMBED_BASE_URL is not configured")
+        if cls.MEMORY_BACKEND == 'zep':
+            if not cls.ZEP_API_KEY:
+                errors.append("ZEP_API_KEY is not configured (required when MEMORY_BACKEND=zep)")
+        else:
+            if not cls.NEO4J_URI:
+                errors.append("NEO4J_URI is not configured")
+            if not cls.NEO4J_PASSWORD:
+                errors.append("NEO4J_PASSWORD is not configured")
+            if not cls.GRAPHITI_EMBED_BASE_URL:
+                errors.append("GRAPHITI_EMBED_BASE_URL is not configured")
         return errors
 

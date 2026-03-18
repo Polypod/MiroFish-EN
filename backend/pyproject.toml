@@ -18,6 +18,7 @@ dependencies = [
     
     # Graphiti / Neo4j memory graph
     "graphiti-core>=0.3",
+    "zep-cloud==3.13.0",
     
     # OASIS social media simulation
     "camel-oasis==0.2.5",
