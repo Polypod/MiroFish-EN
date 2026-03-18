@@ -56,12 +56,12 @@ def get_graph_entities(graph_id: str):
         enrich: Whether to get related edge information (default true)
     """
     try:
-        if not Config.ZEP_API_KEY:
+        if not Config.NEO4J_PASSWORD:
             return jsonify({
                 "success": False,
-                "error": "ZEP_API_KEY not configured"
+                "error": "NEO4J_PASSWORD not configured"
             }), 500
-        
+
         entity_types_str = request.args.get('entity_types', '')
         entity_types = [t.strip() for t in entity_types_str.split(',') if t.strip()] if entity_types_str else None
         enrich = request.args.get('enrich', 'true').lower() == 'true'
@@ -93,12 +93,12 @@ def get_graph_entities(graph_id: str):
 def get_entity_detail(graph_id: str, entity_uuid: str):
     """Get detailed information of a single entity"""
     try:
-        if not Config.ZEP_API_KEY:
+        if not Config.NEO4J_PASSWORD:
             return jsonify({
                 "success": False,
-                "error": "ZEP_API_KEY not configured"
+                "error": "NEO4J_PASSWORD not configured"
             }), 500
-        
+
         reader = ZepEntityReader()
         entity = reader.get_entity_with_context(graph_id, entity_uuid)
         
@@ -126,10 +126,10 @@ def get_entity_detail(graph_id: str, entity_uuid: str):
 def get_entities_by_type(graph_id: str, entity_type: str):
     """Get all entities of a specified type"""
     try:
-        if not Config.ZEP_API_KEY:
+        if not Config.NEO4J_PASSWORD:
             return jsonify({
                 "success": False,
-                "error": "ZEP_API_KEY not configured"
+                "error": "NEO4J_PASSWORD not configured"
             }), 500
         
         enrich = request.args.get('enrich', 'true').lower() == 'true'
