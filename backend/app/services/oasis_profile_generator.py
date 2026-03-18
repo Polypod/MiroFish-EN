@@ -8,6 +8,7 @@ Optimizations:
 3. Distinguish individual entities from abstract/group entities
 """
 
+import asyncio
 import json
 import random
 import time
@@ -16,11 +17,11 @@ from dataclasses import dataclass, field
 from datetime import datetime
 
 from openai import OpenAI
-from zep_cloud.client import Zep
 
 from ..config import Config
 from ..utils.logger import get_logger, log_llm_interaction
 from .zep_entity_reader import EntityNode, ZepEntityReader
+from .graphiti_client import GraphitiClientFactory
 
 logger = get_logger('mirofish.oasis_profile')
 
@@ -197,16 +198,8 @@ class OasisProfileGenerator:
             base_url=self.base_url
         )
         
-        # Zep client for rich context retrieval
-        self.zep_api_key = zep_api_key or Config.ZEP_API_KEY
-        self.zep_client = None
         self.graph_id = graph_id
-        
-        if self.zep_api_key:
-            try:
-                self.zep_client = Zep(api_key=self.zep_api_key)
-            except Exception as e:
-                logger.warning(f"Failed to initialize Zep client: {e}")
+        self._graphiti = GraphitiClientFactory.get_client() if graph_id else None
     
     def generate_profile_from_entity(
         self, 
@@ -297,7 +290,7 @@ class OasisProfileGenerator:
         """
         import concurrent.futures
         
-        if not self.zep_client:
+        if not self._graphiti:
             return {"facts": [], "node_summaries": [], "context": ""}
         
         entity_name = entity.name
@@ -317,52 +310,48 @@ class OasisProfileGenerator:
         
         def search_edges():
             """Search edges (facts/relationships) with retries"""
+            async def _search():
+                return await self._graphiti.search_(
+                    query=comprehensive_query,
+                    group_ids=[self.graph_id],
+                    num_results=30,
+                )
             max_retries = 3
-            last_exception = None
             delay = 2.0
-            
             for attempt in range(max_retries):
                 try:
-                    return self.zep_client.graph.search(
-                        query=comprehensive_query,
-                        graph_id=self.graph_id,
-                        limit=30,
-                        scope="edges",
-                        reranker="rrf"
-                    )
+                    return asyncio.run(_search())
                 except Exception as e:
-                    last_exception = e
                     if attempt < max_retries - 1:
-                        logger.debug(f"Zep edge search attempt {attempt + 1} failed: {str(e)[:80]}, retrying...")
+                        import time
+                        logger.debug(f"Edge search attempt {attempt+1} failed: {str(e)[:80]}, retrying...")
                         time.sleep(delay)
                         delay *= 2
                     else:
-                        logger.debug(f"Zep edge search still failed after {max_retries} attempts: {e}")
+                        logger.debug(f"Edge search failed after {max_retries} attempts: {e}")
             return None
         
         def search_nodes():
             """Search nodes (entity summaries) with retries"""
+            async def _search():
+                return await self._graphiti.get_nodes_by_query(
+                    query=comprehensive_query,
+                    group_ids=[self.graph_id],
+                    num_results=20,
+                )
             max_retries = 3
-            last_exception = None
             delay = 2.0
-            
             for attempt in range(max_retries):
                 try:
-                    return self.zep_client.graph.search(
-                        query=comprehensive_query,
-                        graph_id=self.graph_id,
-                        limit=20,
-                        scope="nodes",
-                        reranker="rrf"
-                    )
+                    return asyncio.run(_search())
                 except Exception as e:
-                    last_exception = e
                     if attempt < max_retries - 1:
-                        logger.debug(f"Zep node search attempt {attempt + 1} failed: {str(e)[:80]}, retrying...")
+                        import time
+                        logger.debug(f"Node search attempt {attempt+1} failed: {str(e)[:80]}, retrying...")
                         time.sleep(delay)
                         delay *= 2
                     else:
-                        logger.debug(f"Zep node search still failed after {max_retries} attempts: {e}")
+                        logger.debug(f"Node search failed after {max_retries} attempts: {e}")
             return None
         
         try:
@@ -375,22 +364,25 @@ class OasisProfileGenerator:
                 edge_result = edge_future.result(timeout=30)
                 node_result = node_future.result(timeout=30)
             
-            # Process edge search results
+            # Process edge search results (Graphiti returns a list directly)
             all_facts = set()
-            if edge_result and hasattr(edge_result, 'edges') and edge_result.edges:
-                for edge in edge_result.edges:
-                    if hasattr(edge, 'fact') and edge.fact:
-                        all_facts.add(edge.fact)
+            if edge_result:
+                for edge in edge_result:
+                    fact = getattr(edge, 'fact', '') or ''
+                    if fact:
+                        all_facts.add(fact)
             results["facts"] = list(all_facts)
-            
-            # Process node search results
+
+            # Process node search results (Graphiti returns a list directly)
             all_summaries = set()
-            if node_result and hasattr(node_result, 'nodes') and node_result.nodes:
-                for node in node_result.nodes:
-                    if hasattr(node, 'summary') and node.summary:
-                        all_summaries.add(node.summary)
-                    if hasattr(node, 'name') and node.name and node.name != entity_name:
-                        all_summaries.add(f"Related entity: {node.name}")
+            if node_result:
+                for node in node_result:
+                    summary = getattr(node, 'summary', '') or ''
+                    name = getattr(node, 'name', '') or ''
+                    if summary:
+                        all_summaries.add(summary)
+                    if name and name != entity_name:
+                        all_summaries.add(f"Related entity: {name}")
             results["node_summaries"] = list(all_summaries)
             
             # Build consolidated context
@@ -401,12 +393,12 @@ class OasisProfileGenerator:
                 context_parts.append("Related entities:\n" + "\n".join(f"- {s}" for s in results["node_summaries"][:10]))
             results["context"] = "\n\n".join(context_parts)
             
-            logger.info(f"Zep mixed retrieval complete: {entity_name}, got {len(results['facts'])} facts and {len(results['node_summaries'])} related nodes")
+            logger.info(f"Graphiti retrieval complete: {entity_name}, got {len(results['facts'])} facts and {len(results['node_summaries'])} related nodes")
             
         except concurrent.futures.TimeoutError:
-            logger.warning(f"Zep retrieval timed out ({entity_name})")
+            logger.warning(f"Graphiti retrieval timed out ({entity_name})")
         except Exception as e:
-            logger.warning(f"Zep retrieval failed ({entity_name}): {e}")
+            logger.warning(f"Graphiti retrieval failed ({entity_name}): {e}")
         
         return results
     
@@ -471,17 +463,17 @@ class OasisProfileGenerator:
             if related_info:
                 context_parts.append("### Related Entity Information\n" + "\n".join(related_info))
         
-        # 4. Retrieve richer information using Zep mixed search
+        # 4. Retrieve richer information using Graphiti search
         zep_results = self._search_zep_for_entity(entity)
-        
+
         if zep_results.get("facts"):
             # De-duplicate: exclude existing facts
             new_facts = [f for f in zep_results["facts"] if f not in existing_facts]
             if new_facts:
-                context_parts.append("### Facts Retrieved from Zep\n" + "\n".join(f"- {f}" for f in new_facts[:15]))
-        
+                context_parts.append("### Facts Retrieved from Graphiti\n" + "\n".join(f"- {f}" for f in new_facts[:15]))
+
         if zep_results.get("node_summaries"):
-            context_parts.append("### Related Nodes Retrieved from Zep\n" + "\n".join(f"- {s}" for s in zep_results["node_summaries"][:10]))
+            context_parts.append("### Related Nodes Retrieved from Graphiti\n" + "\n".join(f"- {s}" for s in zep_results["node_summaries"][:10]))
         
         return "\n\n".join(context_parts)
     
