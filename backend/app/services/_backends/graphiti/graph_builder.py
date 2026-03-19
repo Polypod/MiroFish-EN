@@ -56,7 +56,7 @@ class GraphBuilderService:
     # Checkpoint files live here so progress survives server restarts.
     CHECKPOINT_DIR = os.path.join(
         os.path.dirname(__file__),
-        '../../../../../uploads/graph_checkpoints'
+        '../../../../uploads/graph_checkpoints'
     )
 
     def __init__(self, api_key: Optional[str] = None):
