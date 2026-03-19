@@ -101,6 +101,20 @@ class GraphitiClientFactory:
             )
         )
 
+        # Patch create_batch to guard against empty input lists.
+        # Graphiti calls create_batch([]) when a chunk produces no entities
+        # (e.g. table separators, blank lines).  LM Studio returns an empty
+        # response for an empty input which the OpenAI SDK then raises as
+        # "No embedding data received".  Short-circuiting here avoids the call.
+        _original_create_batch = embedder.create_batch
+
+        async def _safe_create_batch(input_data_list):
+            if not input_data_list:
+                return []
+            return await _original_create_batch(input_data_list)
+
+        embedder.create_batch = _safe_create_batch
+
         cross_encoder = OpenAIRerankerClient(
             config=LLMConfig(
                 api_key=Config.LLM_API_KEY,
