@@ -13,8 +13,11 @@ flask-cors>=6.0.0
 # OpenAI SDK (use OpenAI format consistently for LLM calls)
 openai>=1.0.0
 
-# ============= Zep Cloud =============
+# ============= Memory Backends =============
+# Zep Cloud (cloud-hosted memory graph)
 zep-cloud==3.13.0
+# Graphiti + Neo4j (local/offline memory graph)
+graphiti-core>=0.3
 
 # ============= OASIS Social Media Simulation =============
 # OASIS social simulation framework
