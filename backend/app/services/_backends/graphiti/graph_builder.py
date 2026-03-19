@@ -5,8 +5,10 @@ Builds a standalone knowledge graph from text using Graphiti.
 Drop-in replacement for the former Zep-based GraphBuilderService.
 """
 
+import asyncio
 import json
 import os
+import re
 import uuid
 import time
 import threading
@@ -228,6 +230,61 @@ class GraphBuilderService:
             "Entity types will be inferred from ingested text."
         )
 
+    @staticmethod
+    def _is_trivial_chunk(chunk: str) -> bool:
+        """Return True if chunk is whitespace-only or a markdown/table separator with no meaningful text."""
+        stripped = chunk.strip()
+        if not stripped:
+            return True
+        meaningful = [
+            line for line in stripped.splitlines()
+            if not re.match(r'^[\s|:+\-=*_~`#]+$', line)
+        ]
+        return len(meaningful) == 0
+
+    async def _add_episode_async(
+        self,
+        graph_id: str,
+        chunk: str,
+        index: int,
+        total_chunks: int,
+        progress_callback: Optional[Callable],
+    ) -> Optional[Exception]:
+        """
+        Ingest one chunk with exponential-backoff retry.
+        Returns None on success, the Exception on permanent failure.
+        Uses asyncio.sleep so concurrent batches can retry independently.
+        """
+        ts = int(datetime.now().timestamp())
+        last_exc: Optional[Exception] = None
+        for attempt in range(_RETRY_MAX + 1):
+            try:
+                await self._graphiti.add_episode(
+                    name=f"doc_chunk_{index:04d}_{ts}",
+                    episode_body=chunk,
+                    source_description="uploaded document",
+                    reference_time=datetime.now(timezone.utc),
+                    source=EpisodeType.text,
+                    group_id=graph_id,
+                )
+                return None  # success
+            except Exception as e:
+                last_exc = e
+                if attempt < _RETRY_MAX:
+                    delay = min(_RETRY_BASE_DELAY * (2 ** attempt), _RETRY_MAX_DELAY)
+                    logger.warning(
+                        f"Chunk {index+1}/{total_chunks} failed "
+                        f"(attempt {attempt+1}/{_RETRY_MAX}), retrying in {delay:.1f}s: {e}"
+                    )
+                    if progress_callback:
+                        progress_callback(
+                            f"Chunk {index+1} retry {attempt+1}/{_RETRY_MAX}: {e}",
+                            (index + 1) / total_chunks,
+                        )
+                    await asyncio.sleep(delay)
+        logger.error(f"Chunk {index+1}/{total_chunks} permanently failed: {last_exc}")
+        return last_exc
+
     def add_text_batches(
         self,
         graph_id: str,
@@ -236,78 +293,73 @@ class GraphBuilderService:
         progress_callback: Optional[Callable] = None,
         skip_indices: Optional[Set[int]] = None,
         graph_name: str = "MiroFish Graph",
+        concurrent_episodes: int = 1,
     ) -> List[str]:
         """
-        Add text chunks to the graph one by one (Graphiti has no batch-add API).
+        Add text chunks to the graph using Graphiti.
 
-        Each chunk is retried up to ``_RETRY_MAX`` times with exponential backoff
-        before the exception propagates.  Successfully ingested chunk indices are
-        written to a checkpoint file after every chunk so a later call with
-        ``skip_indices`` (loaded from that file) can resume mid-build.
+        ``concurrent_episodes`` controls how many chunks are ingested in parallel.
+        **Keep at 1 (default) for chunks from the same document.**  Graphiti
+        deduplicates entities by reading existing nodes before writing new ones;
+        concurrent chunks can race and create duplicate entity nodes.  Temporal
+        ordering of edges also depends on sequential ingestion.  Values > 1 are
+        only appropriate when ingesting fully independent documents with no shared
+        entities.
 
-        Returns an empty list (no episode UUIDs needed for polling).
+        Progress is checkpointed after each batch so an interrupted build can be
+        resumed from where it left off.
         """
         total_chunks = len(chunks)
         completed: Set[int] = set(skip_indices or [])
 
+        # Pre-filter trivial chunks (whitespace, markdown separators) so we never
+        # waste an LLM call on content that produces zero entities anyway.
+        trivial_count = 0
         for i, chunk in enumerate(chunks):
-            if i in completed:
-                # Already ingested in a previous run — skip silently.
-                continue
-
-            batch_num = i // batch_size + 1
-            total_batches = (total_chunks + batch_size - 1) // batch_size
-            progress = (i + 1) / total_chunks
-
-            if progress_callback:
-                progress_callback(
-                    f"Processing chunk {i+1}/{total_chunks} (batch {batch_num}/{total_batches})...",
-                    progress,
-                )
-
-            ts = int(datetime.now().timestamp())
-            last_exc: Optional[Exception] = None
-
-            for attempt in range(_RETRY_MAX + 1):
-                try:
-                    run_async(self._graphiti.add_episode(
-                        name=f"doc_chunk_{i:04d}_{ts}",
-                        episode_body=chunk,
-                        source_description="uploaded document",
-                        reference_time=datetime.now(timezone.utc),
-                        source=EpisodeType.text,
-                        group_id=graph_id,
-                    ))
-                    last_exc = None
-                    break  # success
-                except Exception as e:
-                    last_exc = e
-                    if attempt < _RETRY_MAX:
-                        delay = min(_RETRY_BASE_DELAY * (2 ** attempt), _RETRY_MAX_DELAY)
-                        logger.warning(
-                            f"Chunk {i+1}/{total_chunks} failed (attempt {attempt+1}/{_RETRY_MAX}), "
-                            f"retrying in {delay:.1f}s: {e}"
-                        )
-                        if progress_callback:
-                            progress_callback(
-                                f"Chunk {i+1} retry {attempt+1}/{_RETRY_MAX} after error: {e}",
-                                progress,
-                            )
-                        time.sleep(delay)
-
-            if last_exc is not None:
-                logger.error(f"Chunk {i+1}/{total_chunks} failed after {_RETRY_MAX} retries: {last_exc}")
-                if progress_callback:
-                    progress_callback(f"Chunk {i+1} permanently failed: {last_exc}", progress)
-                # Checkpoint what we have so far before raising.
-                self._save_checkpoint(graph_id, completed, total_chunks, graph_name)
-                raise last_exc
-
-            # Mark chunk as done and persist progress.
-            completed.add(i)
+            if i not in completed and self._is_trivial_chunk(chunk):
+                completed.add(i)
+                trivial_count += 1
+        if trivial_count:
+            logger.info(f"Skipping {trivial_count} trivial chunks (whitespace/separators)")
             self._save_checkpoint(graph_id, completed, total_chunks, graph_name)
 
-            time.sleep(0.5)
+        # Ordered list of indices still pending.
+        pending = [i for i in range(total_chunks) if i not in completed]
+
+        for batch_start in range(0, len(pending), concurrent_episodes):
+            batch_indices = pending[batch_start:batch_start + concurrent_episodes]
+
+            if progress_callback:
+                first, last = batch_indices[0], batch_indices[-1]
+                label = f"{first+1}" if first == last else f"{first+1}–{last+1}"
+                progress_callback(
+                    f"Processing chunk {label}/{total_chunks}...",
+                    len(completed) / total_chunks,
+                )
+
+            # Run the batch concurrently on the shared event loop.
+            # _add_episode_async never raises — it returns an Exception on failure.
+            results = run_async(asyncio.gather(*[
+                self._add_episode_async(graph_id, chunks[i], i, total_chunks, progress_callback)
+                for i in batch_indices
+            ]))
+
+            # Mark successes and checkpoint before potentially raising.
+            for j, result in enumerate(results):
+                if result is None:
+                    completed.add(batch_indices[j])
+            self._save_checkpoint(graph_id, completed, total_chunks, graph_name)
+
+            # Raise the first failure; log any additional ones.
+            first_failure: Optional[Exception] = None
+            for j, result in enumerate(results):
+                if result is not None:
+                    if first_failure is None:
+                        first_failure = result
+                    else:
+                        logger.error(f"Chunk {batch_indices[j]+1} also failed: {result}")
+            if first_failure is not None:
+                raise first_failure
 
         return []
 

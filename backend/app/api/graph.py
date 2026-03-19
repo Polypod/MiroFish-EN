@@ -354,6 +354,7 @@ def build_graph():
         graph_name = data.get('graph_name', project.name or 'MiroFish Graph')
         chunk_size = data.get('chunk_size', project.chunk_size or Config.DEFAULT_CHUNK_SIZE)
         chunk_overlap = data.get('chunk_overlap', project.chunk_overlap or Config.DEFAULT_CHUNK_OVERLAP)
+        concurrent_episodes = max(1, int(data.get('concurrent_episodes', 1)))
         
         # Update project configuration
         project.chunk_size = chunk_size
@@ -467,10 +468,11 @@ def build_graph():
                 episode_uuids = builder.add_text_batches(
                     graph_id,
                     chunks,
-                    batch_size=3,
+                    batch_size=concurrent_episodes,
                     progress_callback=add_progress_callback,
                     skip_indices=skip_indices,
                     graph_name=graph_name,
+                    concurrent_episodes=concurrent_episodes,
                 )
                 
                 # Wait for Zep processing to complete (check each episode's processed status)
