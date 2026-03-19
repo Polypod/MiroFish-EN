@@ -330,6 +330,19 @@ def build_graph():
                 "task_id": project.graph_build_task_id
             }), 400
         
+        # Resume an interrupted build — reuse existing graph_id + checkpoint
+        resume = data.get('resume', False)
+        if resume:
+            if not project.graph_id:
+                return jsonify({
+                    "success": False,
+                    "error": "No previous graph_id found on this project — cannot resume"
+                }), 400
+            # Reset from FAILED back to building; keep graph_id intact
+            project.status = ProjectStatus.ONTOLOGY_GENERATED
+            project.graph_build_task_id = None
+            project.error = None
+
         # Reset state when force rebuilding
         if force and project.status in [ProjectStatus.GRAPH_BUILDING, ProjectStatus.FAILED, ProjectStatus.GRAPH_COMPLETED]:
             project.status = ProjectStatus.ONTOLOGY_GENERATED
@@ -372,20 +385,23 @@ def build_graph():
         project.graph_build_task_id = task_id
         ProjectManager.save_project(project)
         
+        # Capture resume flag for use inside the thread
+        _resume = resume
+
         # Start background task
         def build_task():
             build_logger = get_logger('mirofish.build')
             try:
                 build_logger.info(f"[{task_id}] Start building graph...")
                 task_manager.update_task(
-                    task_id, 
+                    task_id,
                     status=TaskStatus.PROCESSING,
                     message="Initializing graph builder service..."
                 )
-                
+
                 # Create graph builder service
                 builder = GraphBuilderService(api_key=Config.NEO4J_PASSWORD)
-                
+
                 # Split into chunks
                 task_manager.update_task(
                     task_id,
@@ -393,24 +409,38 @@ def build_graph():
                     progress=5
                 )
                 chunks = TextProcessor.split_text(
-                    text, 
-                    chunk_size=chunk_size, 
+                    text,
+                    chunk_size=chunk_size,
                     overlap=chunk_overlap
                 )
                 total_chunks = len(chunks)
-                
-                # Create graph
-                task_manager.update_task(
-                    task_id,
-                    message="Creating graph...",
-                    progress=10
-                )
-                graph_id = builder.create_graph(name=graph_name)
-                
-                # Update project's graph_id
-                project.graph_id = graph_id
-                ProjectManager.save_project(project)
-                
+
+                # Resume: reuse existing graph_id + checkpoint; otherwise create fresh
+                if _resume and project.graph_id:
+                    graph_id = project.graph_id
+                    checkpoint = builder._load_checkpoint(graph_id)
+                    skip_indices = set(checkpoint["completed_indices"]) if checkpoint else set()
+                    done = len(skip_indices)
+                    build_logger.info(f"[{task_id}] Resuming graph {graph_id}: {done}/{total_chunks} chunks already done")
+                    task_manager.update_task(
+                        task_id,
+                        message=f"Resuming: {done}/{total_chunks} chunks already done",
+                        progress=10
+                    )
+                else:
+                    # Create graph
+                    task_manager.update_task(
+                        task_id,
+                        message="Creating graph...",
+                        progress=10
+                    )
+                    graph_id = builder.create_graph(name=graph_name)
+                    skip_indices = set()
+
+                    # Update project's graph_id
+                    project.graph_id = graph_id
+                    ProjectManager.save_project(project)
+
                 # Set ontology
                 task_manager.update_task(
                     task_id,
@@ -418,7 +448,7 @@ def build_graph():
                     progress=15
                 )
                 builder.set_ontology(graph_id, ontology)
-                
+
                 # Add text (progress_callback signature: (msg, progress_ratio))
                 def add_progress_callback(msg, progress_ratio):
                     progress = 15 + int(progress_ratio * 40)  # 15% - 55%
@@ -427,18 +457,20 @@ def build_graph():
                         message=msg,
                         progress=progress
                     )
-                
+
                 task_manager.update_task(
                     task_id,
                     message=f"Start adding {total_chunks} text chunks...",
                     progress=15
                 )
-                
+
                 episode_uuids = builder.add_text_batches(
-                    graph_id, 
+                    graph_id,
                     chunks,
                     batch_size=3,
-                    progress_callback=add_progress_callback
+                    progress_callback=add_progress_callback,
+                    skip_indices=skip_indices,
+                    graph_name=graph_name,
                 )
                 
                 # Wait for Zep processing to complete (check each episode's processed status)
@@ -493,16 +525,20 @@ def build_graph():
                 # Mark project as failed
                 build_logger.error(f"[{task_id}] Graph build failed: {str(e)}")
                 build_logger.debug(traceback.format_exc())
-                
+
                 project.status = ProjectStatus.FAILED
                 project.error = str(e)
                 ProjectManager.save_project(project)
-                
+
                 task_manager.update_task(
                     task_id,
                     status=TaskStatus.FAILED,
                     message=f"Build failed: {str(e)}",
-                    error=traceback.format_exc()
+                    error=traceback.format_exc(),
+                    result={
+                        "graph_id": project.graph_id,
+                        "resumable": project.graph_id is not None,
+                    }
                 )
         
         # Start background thread

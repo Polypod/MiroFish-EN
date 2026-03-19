@@ -106,7 +106,7 @@
       </div>
 
       <!-- Step 02: Graph Build -->
-      <div class="step-card" :class="{ 'active': currentPhase === 1, 'completed': currentPhase > 1 }">
+      <div class="step-card" :class="{ 'active': currentPhase === 1, 'completed': currentPhase > 1, 'failed': buildFailed }">
         <div class="card-header">
           <div class="step-info">
             <span class="step-num">02</span>
@@ -114,6 +114,7 @@
           </div>
           <div class="step-status">
             <span v-if="currentPhase > 1" class="badge success">Completed</span>
+            <span v-else-if="buildFailed" class="badge failed">Failed</span>
             <span v-else-if="currentPhase === 1" class="badge processing">{{ buildProgress?.progress || 0 }}%</span>
             <span v-else class="badge pending">Waiting</span>
           </div>
@@ -122,9 +123,15 @@
         <div class="card-content">
           <p class="api-note">POST /api/graph/build</p>
           <p class="description">
-            Based on the generated ontology, documents are automatically chunked and Zep is called to build the knowledge graph, extract entities and relationships, and form temporal memory and community summaries
+            Based on the generated ontology, documents are automatically chunked and Graphiti is called to build the knowledge graph, extract entities and relationships, and form temporal memory and community summaries
           </p>
-          
+
+          <!-- Resume prompt -->
+          <div v-if="buildFailed" class="resume-section">
+            <p class="resume-msg">Build interrupted — progress has been checkpointed. Resume to continue from where it left off.</p>
+            <button class="resume-btn" @click="$emit('resume-build')">↺ Resume Build</button>
+          </div>
+
           <!-- Stats Cards -->
           <div class="stats-grid">
             <div class="stat-card">
@@ -198,11 +205,12 @@ const props = defineProps({
   projectData: Object,
   ontologyProgress: Object,
   buildProgress: Object,
+  buildFailed: { type: Boolean, default: false },
   graphData: Object,
   systemLogs: { type: Array, default: () => [] }
 })
 
-defineEmits(['next-step'])
+defineEmits(['next-step', 'resume-build'])
 
 const selectedOntologyItem = ref(null)
 const logContent = ref(null)
@@ -347,6 +355,43 @@ watch(() => props.systemLogs.length, () => {
 .badge.processing { background: #FF5722; color: #FFF; }
 .badge.accent { background: #FF5722; color: #FFF; }
 .badge.pending { background: #F5F5F5; color: #999; }
+.badge.failed { background: #FFEBEE; color: #C62828; }
+
+.step-card.failed {
+  border-color: #EF9A9A;
+  box-shadow: 0 4px 12px rgba(198, 40, 40, 0.06);
+}
+
+.resume-section {
+  background: #FFF8E1;
+  border: 1px solid #FFE082;
+  border-radius: 6px;
+  padding: 12px 14px;
+  margin-bottom: 16px;
+}
+
+.resume-msg {
+  font-size: 12px;
+  color: #5D4037;
+  margin-bottom: 10px;
+  line-height: 1.5;
+}
+
+.resume-btn {
+  background: #000;
+  color: #FFF;
+  border: none;
+  padding: 8px 18px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 0.2s;
+}
+
+.resume-btn:hover {
+  opacity: 0.8;
+}
 
 .api-note {
   font-family: 'JetBrains Mono', monospace;

@@ -49,15 +49,17 @@
       <!-- Right Panel: Step Components -->
       <div class="panel-wrapper right" :style="rightPanelStyle">
         <!-- Step 1: Graph Construction -->
-        <Step1GraphBuild 
+        <Step1GraphBuild
           v-if="currentStep === 1"
           :currentPhase="currentPhase"
           :projectData="projectData"
           :ontologyProgress="ontologyProgress"
           :buildProgress="buildProgress"
+          :buildFailed="buildFailed"
           :graphData="graphData"
           :systemLogs="systemLogs"
           @next-step="handleNextStep"
+          @resume-build="resumeBuild"
         />
         <!-- Step 2: Environment Setup -->
         <Step2EnvSetup
@@ -103,6 +105,7 @@ const graphData = ref(null)
 const currentPhase = ref(-1) // -1: Upload, 0: Ontology, 1: Build, 2: Complete
 const ontologyProgress = ref(null)
 const buildProgress = ref(null)
+const buildFailed = ref(false)
 const systemLogs = ref([])
 
 // Polling timers
@@ -289,6 +292,31 @@ const startBuildGraph = async () => {
   }
 }
 
+const resumeBuild = async () => {
+  buildFailed.value = false
+  error.value = ''
+  try {
+    currentPhase.value = 1
+    buildProgress.value = { progress: 0, message: 'Resuming build from checkpoint...' }
+    addLog('Resuming interrupted graph build from checkpoint...')
+
+    const res = await buildGraph({ project_id: currentProjectId.value, resume: true })
+    if (res.success) {
+      addLog(`Resume task started. Task ID: ${res.data.task_id}`)
+      startGraphPolling()
+      startPollingTask(res.data.task_id)
+    } else {
+      buildFailed.value = true
+      error.value = res.error
+      addLog(`Error resuming build: ${res.error}`)
+    }
+  } catch (err) {
+    buildFailed.value = true
+    error.value = err.message
+    addLog(`Exception in resumeBuild: ${err.message}`)
+  }
+}
+
 const startGraphPolling = () => {
   addLog('Started polling for graph data...')
   fetchGraphData()
@@ -345,8 +373,14 @@ const pollTaskStatus = async (taskId) => {
         }
       } else if (task.status === 'failed') {
         stopPolling()
+        stopGraphPolling()
+        buildProgress.value = null
+        buildFailed.value = true
         error.value = task.error
         addLog(`Graph build task failed: ${task.error}`)
+        if (task.result?.resumable) {
+          addLog(`Build is resumable — checkpoint saved. Click "Resume Build" to continue.`)
+        }
       }
     }
   } catch (e) {
