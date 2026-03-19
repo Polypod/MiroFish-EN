@@ -127,6 +127,40 @@ LLM_MODEL_NAME=qwen-plus
 ZEP_API_KEY=your_zep_api_key
 ```
 
+#### Memory Backend: Zep Cloud vs. Graphiti + Neo4j
+
+MiroFish supports two memory backends. Set `MEMORY_BACKEND` in your `.env` to choose:
+
+| Backend | Best for | Requires |
+|---------|----------|----------|
+| `zep` | Cloud/hosted deployments | `ZEP_API_KEY` from [app.getzep.com](https://app.getzep.com/) |
+| `graphiti` | Fully local / offline deployments | Neo4j running locally |
+
+**Using Graphiti with Neo4j (local deployment):**
+
+1. Run Neo4j locally (Docker is the easiest way):
+   ```bash
+   docker run -p 7474:7474 -p 7687:7687 \
+     -e NEO4J_AUTH=neo4j/your_password \
+     neo4j:latest
+   ```
+
+2. Add the following to your `.env`:
+   ```env
+   MEMORY_BACKEND=graphiti
+
+   NEO4J_URI=bolt://localhost:7687
+   NEO4J_USER=neo4j
+   NEO4J_PASSWORD=your_password
+
+   # Embedding model — any OpenAI-compatible endpoint works (e.g. LM Studio)
+   GRAPHITI_EMBED_BASE_URL=http://localhost:1234/v1
+   GRAPHITI_EMBED_MODEL=text-embedding-nomic-embed-text-v1.5
+   GRAPHITI_EMBED_API_KEY=lm-studio
+   ```
+
+3. Start MiroFish as normal — no cloud account or external API needed for memory.
+
 #### 2. Install Dependencies
 
 ```bash
