@@ -564,58 +564,89 @@ const initProject = async () => {
   }
 }
 
-// Handle new project - call ontology/generate API
+// Handle new project - call ontology/generate API (async: returns task_id immediately)
 const handleNewProject = async () => {
   const pending = getPendingUpload()
-  
+
   if (!pending.isPending || pending.files.length === 0) {
     error.value = 'No files to upload, please return to home and try again'
     loading.value = false
     return
   }
-  
+
   try {
     loading.value = true
-    currentPhase.value = 0 // Ontology generation phase
-    ontologyProgress.value = { message: 'Uploading files and analyzing documents...' }
-    
-    // Build FormData
+    currentPhase.value = 0
+    ontologyProgress.value = { message: 'Uploading files...' }
+
     const formDataObj = new FormData()
     pending.files.forEach(file => {
       formDataObj.append('files', file)
     })
     formDataObj.append('simulation_requirement', pending.simulationRequirement)
-    
-    // Call ontology generation API
+
+    // Returns immediately with {project_id, task_id}
     const response = await generateOntology(formDataObj)
-    
+
     if (response.success) {
-      // Clear pending upload data
       clearPendingUpload()
-      
-      // Update project ID and data
+
       currentProjectId.value = response.data.project_id
       projectData.value = response.data
-      
-      // Update URL (no page refresh)
+
       router.replace({
         name: 'Process',
         params: { projectId: response.data.project_id }
       })
-      
-      ontologyProgress.value = null
-      
-      // Start graph build automatically
-      await startBuildGraph()
+
+      // Poll until LLM finishes
+      ontologyProgress.value = { message: 'Analyzing documents with LLM...' }
+      await pollOntologyTask(response.data.task_id)
     } else {
       error.value = response.error || 'Ontology generation failed'
     }
   } catch (err) {
-    console.error('Handle new project error:', err)
+    console.error('Exception in handleNewProject:', err)
     error.value = 'Project initialization failed: ' + (err.message || 'Unknown error')
   } finally {
     loading.value = false
   }
+}
+
+// Poll ontology generation task until complete, then start graph build
+const pollOntologyTask = (taskId) => {
+  return new Promise((resolve, reject) => {
+    const timer = setInterval(async () => {
+      try {
+        const response = await getTaskStatus(taskId)
+        if (!response.success) return
+
+        const task = response.data
+        ontologyProgress.value = { message: task.message || 'Analyzing...' }
+
+        if (task.status === 'completed') {
+          clearInterval(timer)
+          ontologyProgress.value = null
+
+          // Reload project to get ontology data
+          const projectResponse = await getProject(currentProjectId.value)
+          if (projectResponse.success) {
+            projectData.value = projectResponse.data
+          }
+
+          await startBuildGraph()
+          resolve()
+        } else if (task.status === 'failed') {
+          clearInterval(timer)
+          ontologyProgress.value = null
+          error.value = 'Ontology generation failed: ' + (task.message || 'Unknown error')
+          reject(new Error(task.message))
+        }
+      } catch (err) {
+        console.error('Poll ontology task error:', err)
+      }
+    }, 3000)
+  })
 }
 
 // Load existing project data
@@ -627,7 +658,13 @@ const loadProject = async () => {
     if (response.success) {
       projectData.value = response.data
       updatePhaseByStatus(response.data.status)
-      
+
+      // Resume in-progress ontology generation
+      if (response.data.status === 'ontology_generating' && response.data.ontology_task_id) {
+        ontologyProgress.value = { message: 'Resuming ontology generation...' }
+        await pollOntologyTask(response.data.ontology_task_id)
+      }
+
       // Start graph build automatically
       if (response.data.status === 'ontology_generated' && !response.data.graph_id) {
         await startBuildGraph()
@@ -658,6 +695,7 @@ const loadProject = async () => {
 const updatePhaseByStatus = (status) => {
   switch (status) {
     case 'created':
+    case 'ontology_generating':
     case 'ontology_generated':
       currentPhase.value = 0
       break

@@ -17,6 +17,7 @@ from ..config import Config
 class ProjectStatus(str, Enum):
     """Project status."""
     CREATED = "created"              # Just created; files uploaded
+    ONTOLOGY_GENERATING = "ontology_generating"  # LLM ontology generation in progress
     ONTOLOGY_GENERATED = "ontology_generated"  # Ontology generated
     GRAPH_BUILDING = "graph_building"    # Graph building in progress
     GRAPH_COMPLETED = "graph_completed"  # Graph build completed
@@ -40,6 +41,9 @@ class Project:
     ontology: Optional[Dict[str, Any]] = None
     analysis_summary: Optional[str] = None
     
+    # Ontology task (async generation)
+    ontology_task_id: Optional[str] = None
+
     # Graph information (filled after API 2)
     graph_id: Optional[str] = None
     graph_build_task_id: Optional[str] = None

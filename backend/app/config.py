@@ -36,6 +36,10 @@ class Config:
     LLM_MODEL_NAME = os.environ.get('LLM_MODEL_NAME', 'gpt-4o-mini')
     # Set to 'false' for local models (e.g. LM Studio) that don't support response_format
     LLM_JSON_MODE = os.environ.get('LLM_JSON_MODE', 'true').lower() == 'true'
+    # Max characters of document text sent to LLM for ontology analysis (reduce for local models)
+    ONTOLOGY_MAX_TEXT_LENGTH = int(os.environ.get('ONTOLOGY_MAX_TEXT_LENGTH', '50000'))
+    # Max tokens for ontology LLM response (reduce for local models with small context windows)
+    ONTOLOGY_MAX_TOKENS = int(os.environ.get('ONTOLOGY_MAX_TOKENS', '32768'))
     
     # Graphiti / Neo4j config
     NEO4J_URI = os.environ.get('NEO4J_URI', 'bolt://localhost:7687')

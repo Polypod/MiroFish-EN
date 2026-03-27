@@ -210,37 +210,78 @@ def generate_ontology():
         project.total_text_length = len(all_text)
         ProjectManager.save_extracted_text(project.project_id, all_text)
         logger.info(f"Text extraction completed, total {len(all_text)} characters")
-        
-        # Generate ontology
-        logger.info("Calling LLM to generate ontology definitions...")
-        generator = OntologyGenerator()
-        ontology = generator.generate(
-            document_texts=document_texts,
-            simulation_requirement=simulation_requirement,
-            additional_context=additional_context if additional_context else None
-        )
-        
-        # Save ontology to project
-        entity_count = len(ontology.get("entity_types", []))
-        edge_count = len(ontology.get("edge_types", []))
-        logger.info(f"Ontology generated: {entity_count} entity types, {edge_count} relation types")
-        
-        project.ontology = {
-            "entity_types": ontology.get("entity_types", []),
-            "edge_types": ontology.get("edge_types", [])
-        }
-        project.analysis_summary = ontology.get("analysis_summary", "")
-        project.status = ProjectStatus.ONTOLOGY_GENERATED
+
+        # Create async task for LLM generation
+        task_manager = TaskManager()
+        task_id = task_manager.create_task(f"Generate ontology: {project_name}")
+        project.status = ProjectStatus.ONTOLOGY_GENERATING
+        project.ontology_task_id = task_id
         ProjectManager.save_project(project)
-        logger.info(f"=== Ontology generation completed === project_id: {project.project_id}")
-        
+
+        # Capture locals for background thread
+        _doc_texts = document_texts
+        _sim_req = simulation_requirement
+        _additional = additional_context if additional_context else None
+
+        def ontology_task():
+            ont_logger = get_logger('mirofish.ontology')
+            try:
+                task_manager.update_task(task_id, status=TaskStatus.PROCESSING, message="Calling LLM to generate ontology...")
+                ont_logger.info("Calling LLM to generate ontology definitions...")
+
+                generator = OntologyGenerator()
+                ontology = generator.generate(
+                    document_texts=_doc_texts,
+                    simulation_requirement=_sim_req,
+                    additional_context=_additional
+                )
+
+                entity_count = len(ontology.get("entity_types", []))
+                edge_count = len(ontology.get("edge_types", []))
+                ont_logger.info(f"Ontology generated: {entity_count} entity types, {edge_count} relation types")
+
+                project.ontology = {
+                    "entity_types": ontology.get("entity_types", []),
+                    "edge_types": ontology.get("edge_types", [])
+                }
+                project.analysis_summary = ontology.get("analysis_summary", "")
+                project.status = ProjectStatus.ONTOLOGY_GENERATED
+                ProjectManager.save_project(project)
+                ont_logger.info(f"=== Ontology generation completed === project_id: {project.project_id}")
+
+                task_manager.update_task(
+                    task_id,
+                    status=TaskStatus.COMPLETED,
+                    message=f"Ontology generated: {entity_count} entity types, {edge_count} relation types",
+                    progress=100,
+                    result={
+                        "project_id": project.project_id,
+                        "entity_count": entity_count,
+                        "edge_count": edge_count
+                    }
+                )
+            except Exception as e:
+                ont_logger.error(f"Ontology generation failed: {str(e)}")
+                ont_logger.debug(traceback.format_exc())
+                project.status = ProjectStatus.FAILED
+                project.error = str(e)
+                ProjectManager.save_project(project)
+                task_manager.update_task(
+                    task_id,
+                    status=TaskStatus.FAILED,
+                    message=f"Ontology generation failed: {str(e)}",
+                    error=traceback.format_exc()
+                )
+
+        thread = threading.Thread(target=ontology_task, daemon=True)
+        thread.start()
+
         return jsonify({
             "success": True,
             "data": {
                 "project_id": project.project_id,
                 "project_name": project.name,
-                "ontology": project.ontology,
-                "analysis_summary": project.analysis_summary,
+                "task_id": task_id,
                 "files": project.files,
                 "total_text_length": project.total_text_length
             }

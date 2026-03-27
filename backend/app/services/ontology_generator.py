@@ -6,6 +6,7 @@ API 1: Analyze text content and generate entity/relationship type definitions fo
 import json
 from typing import Dict, Any, List, Optional
 from ..utils.llm_client import LLMClient
+from ..config import Config
 
 
 # System prompt for ontology generation
@@ -196,7 +197,7 @@ class OntologyGenerator:
         result = self.llm_client.chat_json(
             messages=messages,
             temperature=0.3,
-            max_tokens=32768
+            max_tokens=Config.ONTOLOGY_MAX_TOKENS
         )
         
         # Validate and post-process
@@ -204,8 +205,8 @@ class OntologyGenerator:
         
         return result
     
-    # Maximum text length sent to LLM (50,000 characters)
-    MAX_TEXT_LENGTH_FOR_LLM = 50000
+    # Maximum text length sent to LLM — override via ONTOLOGY_MAX_TEXT_LENGTH env var
+    MAX_TEXT_LENGTH_FOR_LLM = Config.ONTOLOGY_MAX_TEXT_LENGTH
     
     def _build_user_message(
         self,
