@@ -66,16 +66,16 @@ class LLMClient:
         
         response = self.client.chat.completions.create(**kwargs)
         content_raw = response.choices[0].message.content or ""
-        # Some models (e.g., MiniMax M2.5) include <think> content that should be removed
-        content_cleaned = re.sub(r'<think>[\s\S]*?</think>', '', content_raw).strip()
-
+        # Some models (e.g., MiniMax M2.5) include [0m```[^`]*[0m``` content that should be removed
+        content_cleaned = re.sub(r'[0m```[^`]*[0m```', '', content_raw).strip()
+        
         if should_log:
             log_llm_interaction(
                 source_file="llm_client.py",
                 messages=messages,
                 response_text=content_cleaned,
             )
-
+        
         return content_cleaned
     
     def chat_json(
@@ -86,24 +86,31 @@ class LLMClient:
     ) -> Dict[str, Any]:
         """
         Send a chat request and return JSON.
-        
-        Args:
-            messages: Message list
-            temperature: Temperature parameter
-            max_tokens: Maximum token count
-            
-        Returns:
-            Parsed JSON object
         """
-        response = self.chat(
-            messages=messages,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            response_format={"type": "json_object"},
-            should_log=False,
-        )
-        # Clean markdown code fence markers
-        cleaned_response = response.strip()
+        kwargs = {
+            "model": self.model,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+        }
+        if Config.LLM_JSON_MODE:
+            kwargs["response_format"] = {"type": "json_object"}
+
+        response = self.client.chat.completions.create(**kwargs)
+        content_raw = response.choices[0].message.content or ""
+        reasoning_content = response.choices[0].message.reasoning_content or ""
+
+        # Clean the content_raw (remove markdown code fences) as in chat method
+        content_cleaned = re.sub(r'[0m```[^`]*[0m```', '', content_raw).strip()
+
+        # Determine which string to use for JSON parsing
+        json_str = content_cleaned
+        if not json_str:
+            # If content is empty, try reasoning_content
+            json_str = reasoning_content.strip()
+
+        # Clean markdown code fence markers (as in the original chat_json)
+        cleaned_response = json_str.strip()
         cleaned_response = re.sub(r'^```(?:json)?\s*\n?', '', cleaned_response, flags=re.IGNORECASE)
         cleaned_response = re.sub(r'\n?```\s*$', '', cleaned_response)
         cleaned_response = cleaned_response.strip()
@@ -123,4 +130,3 @@ class LLMClient:
                 response_text=cleaned_response,
             )
             raise ValueError(f"Invalid JSON returned by LLM: {cleaned_response}")
-

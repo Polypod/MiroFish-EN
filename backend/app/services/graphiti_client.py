@@ -9,11 +9,18 @@ loops, which causes "Future attached to a different loop" errors.
 """
 
 import asyncio
-import concurrent.futures
+import json
 import threading
+import typing
+
+import openai
+from pydantic import BaseModel
 
 from graphiti_core import Graphiti
 from graphiti_core.llm_client.openai_client import OpenAIClient, LLMConfig
+from graphiti_core.llm_client.config import DEFAULT_MAX_TOKENS, ModelSize
+from graphiti_core.llm_client.errors import RateLimitError, RefusalError
+from graphiti_core.prompts.models import Message
 from graphiti_core.embedder.openai import OpenAIEmbedder, OpenAIEmbedderConfig
 from graphiti_core.cross_encoder.openai_reranker_client import OpenAIRerankerClient
 
@@ -21,6 +28,71 @@ from ..config import Config
 from ..utils.logger import get_logger
 
 logger = get_logger('mirofish.graphiti_client')
+
+
+class ReasoningFallbackOpenAIClient(OpenAIClient):
+    """OpenAIClient that falls back to reasoning_content when content/parsed is empty.
+
+    Some models (e.g. nvidia-nemotron) put their structured JSON response in
+    the reasoning_content field instead of content, leaving parsed=None.  This
+    subclass detects that case and parses the JSON from reasoning_content.
+    """
+
+    async def _generate_response(
+        self,
+        messages: list[Message],
+        response_model: type[BaseModel] | None = None,
+        max_tokens: int = DEFAULT_MAX_TOKENS,
+        model_size: ModelSize = ModelSize.medium,
+    ) -> dict[str, typing.Any]:
+        import re
+
+        openai_messages = []
+        for m in messages:
+            m.content = self._clean_input(m.content)
+            if m.role in ('user', 'system'):
+                openai_messages.append({'role': m.role, 'content': m.content})
+
+        try:
+            model = self.small_model if model_size == ModelSize.small else self.model
+
+            response = await self.client.beta.chat.completions.parse(
+                model=model,
+                messages=openai_messages,
+                temperature=self.temperature,
+                max_tokens=max_tokens or self.max_tokens,
+                response_format=response_model,  # type: ignore
+            )
+
+            response_object = response.choices[0].message
+
+            if response_object.parsed:
+                return response_object.parsed.model_dump()
+            elif response_object.refusal:
+                raise RefusalError(response_object.refusal)
+
+            # Some models (e.g. nvidia-nemotron) put the JSON in reasoning_content
+            reasoning = getattr(response_object, 'reasoning_content', None) or ''
+            if reasoning:
+                cleaned = re.sub(r'^```(?:json)?\s*\n?', '', reasoning.strip(), flags=re.IGNORECASE)
+                cleaned = re.sub(r'\n?```\s*$', '', cleaned).strip()
+                try:
+                    data = json.loads(cleaned)
+                    if response_model is not None:
+                        return response_model.model_validate(data).model_dump()
+                    return data
+                except (json.JSONDecodeError, Exception):
+                    pass
+
+            raise Exception(f'Invalid response from LLM: {response_object.model_dump()}')
+        except openai.LengthFinishReasonError as e:
+            raise Exception(f'Output length exceeded max tokens {self.max_tokens}: {e}') from e
+        except openai.RateLimitError as e:
+            raise RateLimitError from e
+        except Exception as e:
+            logger.error(f'Error in generating LLM response: {e}')
+            raise
+
 
 # ---------------------------------------------------------------------------
 # Shared persistent event loop
@@ -85,7 +157,7 @@ class GraphitiClientFactory:
         if not Config.NEO4J_PASSWORD:
             raise RuntimeError("Graphiti client cannot initialize — NEO4J_PASSWORD is not set")
 
-        llm_client = OpenAIClient(
+        llm_client = ReasoningFallbackOpenAIClient(
             config=LLMConfig(
                 api_key=Config.LLM_API_KEY,
                 model=Config.LLM_MODEL_NAME,
