@@ -237,122 +237,9 @@ def create_simulation():
 
 
 def _check_simulation_prepared(simulation_id: str) -> tuple:
-    """
-    Check if simulation preparation is complete
-    
-    Check conditions：
-    1. state.json exists and status is "ready"
-    2. necessary files exist：reddit_profiles.json, twitter_profiles.csv, simulation_config.json
-    
-    Note: Run scripts (run_*.py) kept in backend/scripts/ directory, no longer copied to simulation directory
-    
-    Args:
-        simulation_id: Simulation ID
-        
-    Returns:
-        (is_prepared: bool, info: dict)
-    """
-    import os
-    from ..config import Config
-    
-    simulation_dir = os.path.join(Config.OASIS_SIMULATION_DATA_DIR, simulation_id)
-    
-    # Check if directory exists
-    if not os.path.exists(simulation_dir):
-        return False, {"reason": "Simulation directory does not exist"}
-    
-    # Required file list (excluding scripts, scripts are in backend/scripts/)
-    required_files = [
-        "state.json",
-        "simulation_config.json",
-        "reddit_profiles.json",
-        "twitter_profiles.csv"
-    ]
-    
-    # Check if files exist
-    existing_files = []
-    missing_files = []
-    for f in required_files:
-        file_path = os.path.join(simulation_dir, f)
-        if os.path.exists(file_path):
-            existing_files.append(f)
-        else:
-            missing_files.append(f)
-    
-    if missing_files:
-        return False, {
-            "reason": "Missing necessary files",
-            "missing_files": missing_files,
-            "existing_files": existing_files
-        }
-    
-    # Check status in state.json
-    state_file = os.path.join(simulation_dir, "state.json")
-    try:
-        import json
-        with open(state_file, 'r', encoding='utf-8') as f:
-            state_data = json.load(f)
-        
-        status = state_data.get("status", "")
-        config_generated = state_data.get("config_generated", False)
-        
-        # Detailed log
-        logger.debug(f"Check simulation preparation status: {simulation_id}, status={status}, config_generated={config_generated}")
-        
-        # If config_generated=True and file exists, consider preparation complete
-        # The following statuses indicate preparation work is complete:
-        # - ready: Preparation complete, can run
-        # - preparing: If config_generated=True, it means preparation is complete
-        # - running: Currently running, preparation was completed long ago
-        # - completed: Run completed, preparation was completed long ago
-        # - stopped: Already stopped, preparation was completed long ago
-        # - failed: Run failed (but preparation is complete)
-        prepared_statuses = ["ready", "preparing", "running", "completed", "stopped", "failed"]
-        if status in prepared_statuses and config_generated:
-            # Get file statistics
-            profiles_file = os.path.join(simulation_dir, "reddit_profiles.json")
-            config_file = os.path.join(simulation_dir, "simulation_config.json")
-            
-            profiles_count = 0
-            if os.path.exists(profiles_file):
-                with open(profiles_file, 'r', encoding='utf-8') as f:
-                    profiles_data = json.load(f)
-                    profiles_count = len(profiles_data) if isinstance(profiles_data, list) else 0
-            
-            # If status is preparing but files are complete, automatically update status to ready
-            if status == "preparing":
-                try:
-                    state_data["status"] = "ready"
-                    from datetime import datetime
-                    state_data["updated_at"] = datetime.now().isoformat()
-                    with open(state_file, 'w', encoding='utf-8') as f:
-                        json.dump(state_data, f, ensure_ascii=False, indent=2)
-                    logger.info(f"Automatically update simulation status: {simulation_id} preparing -> ready")
-                    status = "ready"
-                except Exception as e:
-                    logger.warning(f"Failed to automatically update status: {e}")
-            
-            logger.info(f"Simulation {simulation_id} check result: Already prepared (status={status}, config_generated={config_generated})")
-            return True, {
-                "status": status,
-                "entities_count": state_data.get("entities_count", 0),
-                "profiles_count": profiles_count,
-                "entity_types": state_data.get("entity_types", []),
-                "config_generated": config_generated,
-                "created_at": state_data.get("created_at"),
-                "updated_at": state_data.get("updated_at"),
-                "existing_files": existing_files
-            }
-        else:
-            logger.warning(f"Simulation {simulation_id} check result: Preparation not complete (status={status}, config_generated={config_generated})")
-            return False, {
-                "reason": f"Status not in preparation list or config_generated is false: status={status}, config_generated={config_generated}",
-                "status": status,
-                "config_generated": config_generated
-            }
-            
-    except Exception as e:
-        return False, {"reason": f"Failed to read state file: {str(e)}"}
+    """Check if simulation preparation is complete. Delegates to SimulationManager."""
+    manager = SimulationManager()
+    return manager.check_prepared(simulation_id)
 
 
 @simulation_bp.route('/prepare', methods=['POST'])
@@ -398,7 +285,7 @@ def prepare_simulation():
     """
     import threading
     import os
-    from ..models.task import TaskManager, TaskStatus
+    from ..models.task import TaskManager
     from ..config import Config
     
     try:
@@ -505,110 +392,19 @@ def prepare_simulation():
         
         # Define background task
         def run_prepare():
-            try:
-                task_manager.update_task(
-                    task_id,
-                    status=TaskStatus.PROCESSING,
-                    progress=0,
-                    message="Starting to prepare simulation environment..."
-                )
-                
-                # Prepare simulation (with progress callback)
-                # Store stage progress details
-                stage_details = {}
-                
-                def progress_callback(stage, progress, message, **kwargs):
-                    # Calculate total progress
-                    stage_weights = {
-                        "reading": (0, 15),                    # 0-15%
-                        "generating_delegates": (15, 40),      # 15-40%
-                        "generating_profiles": (40, 70),       # 40-70%
-                        "generating_config": (70, 90),         # 70-90%
-                        "copying_scripts": (90, 100)           # 90-100%
-                    }
-                    
-                    start, end = stage_weights.get(stage, (0, 100))
-                    current_progress = int(start + (end - start) * progress / 100)
-                    
-                    # Build detailed progress information
-                    stage_names = {
-                        "reading": "Reading graph entities",
-                        "generating_delegates": "Generating synthetic delegates",
-                        "generating_profiles": "Generating Agent personas",
-                        "generating_config": "Generating simulation config",
-                        "copying_scripts": "Preparing simulation scripts"
-                    }
-                    
-                    stage_index = list(stage_weights.keys()).index(stage) + 1 if stage in stage_weights else 1
-                    total_stages = len(stage_weights)
-                    
-                    # Update stage details
-                    stage_details[stage] = {
-                        "stage_name": stage_names.get(stage, stage),
-                        "stage_progress": progress,
-                        "current": kwargs.get("current", 0),
-                        "total": kwargs.get("total", 0),
-                        "item_name": kwargs.get("item_name", "")
-                    }
-                    
-                    # Build detailed progress information
-                    detail = stage_details[stage]
-                    progress_detail_data = {
-                        "current_stage": stage,
-                        "current_stage_name": stage_names.get(stage, stage),
-                        "stage_index": stage_index,
-                        "total_stages": total_stages,
-                        "stage_progress": progress,
-                        "current_item": detail["current"],
-                        "total_items": detail["total"],
-                        "item_description": message
-                    }
-                    
-                    # Build concise message
-                    if detail["total"] > 0:
-                        detailed_message = (
-                            f"[{stage_index}/{total_stages}] {stage_names.get(stage, stage)}: "
-                            f"{detail['current']}/{detail['total']} - {message}"
-                        )
-                    else:
-                        detailed_message = f"[{stage_index}/{total_stages}] {stage_names.get(stage, stage)}: {message}"
-                    
-                    task_manager.update_task(
-                        task_id,
-                        progress=current_progress,
-                        message=detailed_message,
-                        progress_detail=progress_detail_data
-                    )
-                
-                result_state = manager.prepare_simulation(
-                    simulation_id=simulation_id,
-                    simulation_requirement=simulation_requirement,
-                    document_text=document_text,
-                    defined_entity_types=entity_types_list,
-                    use_llm_for_profiles=use_llm_for_profiles,
-                    progress_callback=progress_callback,
-                    parallel_profile_count=parallel_profile_count,
-                    enable_synthetic_delegates=enable_synthetic_delegates,
-                    synthetic_delegate_count=synthetic_delegate_count,
-                    synthetic_delegate_config=synthetic_delegate_config,
-                )
-                
-                # Task completed
-                task_manager.complete_task(
-                    task_id,
-                    result=result_state.to_simple_dict()
-                )
-                
-            except Exception as e:
-                logger.error(f"Failed to prepare simulation: {str(e)}")
-                task_manager.fail_task(task_id, str(e))
-                
-                # Update simulation status to failed
-                state = manager.get_simulation(simulation_id)
-                if state:
-                    state.status = SimulationStatus.FAILED
-                    state.error = str(e)
-                    manager._save_simulation_state(state)
+            manager.run_prepare_task(
+                task_id=task_id,
+                task_manager=task_manager,
+                simulation_id=simulation_id,
+                simulation_requirement=simulation_requirement,
+                document_text=document_text,
+                entity_types_list=entity_types_list,
+                use_llm_for_profiles=use_llm_for_profiles,
+                parallel_profile_count=parallel_profile_count,
+                enable_synthetic_delegates=enable_synthetic_delegates,
+                synthetic_delegate_count=synthetic_delegate_count,
+                synthetic_delegate_config=synthetic_delegate_config,
+            )
         
         # Start background thread
         thread = threading.Thread(target=run_prepare, daemon=True)

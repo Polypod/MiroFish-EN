@@ -17,10 +17,9 @@ from typing import Dict, Any, List, Optional, Callable, Union
 from dataclasses import dataclass, field, asdict
 from datetime import datetime
 
-from openai import OpenAI
-
 from ..config import Config
-from ..utils.logger import get_logger, log_llm_interaction
+from ..utils.llm_client import LLMClient
+from ..utils.logger import get_logger
 from .zep_entity_reader import EntityNode, ZepEntityReader
 
 logger = get_logger('mirofish.simulation_config')
@@ -226,6 +225,7 @@ class SimulationConfigGenerator:
     
     def __init__(
         self,
+        llm_client: Optional[LLMClient] = None,
         api_key: Optional[str] = None,
         base_url: Optional[str] = None,
         model_name: Optional[str] = None
@@ -234,12 +234,10 @@ class SimulationConfigGenerator:
         self.base_url = base_url or Config.LLM_BASE_URL
         self.model_name = model_name or Config.LLM_MODEL_NAME
         
-        if not self.api_key:
-            raise ValueError("LLM_API_KEY is not configured")
-        
-        self.client = OpenAI(
+        self.llm = llm_client or LLMClient(
             api_key=self.api_key,
-            base_url=self.base_url
+            base_url=self.base_url,
+            model=self.model_name
         )
     
     def generate_config(
@@ -434,111 +432,14 @@ class SimulationConfigGenerator:
         return "\n".join(lines)
     
     def _call_llm_with_retry(self, prompt: str, system_prompt: str) -> Dict[str, Any]:
-        """LLM call with retries and JSON repair logic."""
-        import re
-        
-        max_attempts = 3
-        last_error = None
-        
-        for attempt in range(max_attempts):
-            try:
-                messages = [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": prompt}
-                ]
-                response = self.client.chat.completions.create(
-                    model=self.model_name,
-                    messages=messages,
-                    response_format={"type": "json_object"},
-                    temperature=0.7 - (attempt * 0.1)  # Lower temperature on each retry
-                    # Do not set max_tokens to allow full model output
-                )
-                
-                content = response.choices[0].message.content
-                log_llm_interaction(
-                    source_file="simulation_config_generator.py",
-                    messages=messages,
-                    response_text=(content or "").strip(),
-                )
-                finish_reason = response.choices[0].finish_reason
-                
-                # Check if output was truncated
-                if finish_reason == 'length':
-                    logger.warning(f"LLM output truncated (attempt {attempt+1})")
-                    content = self._fix_truncated_json(content)
-                
-                # Try parsing JSON
-                try:
-                    return json.loads(content)
-                except json.JSONDecodeError as e:
-                    logger.warning(f"JSON parse failed (attempt {attempt+1}): {str(e)[:80]}")
-                    
-                    # Try fixing JSON
-                    fixed = self._try_fix_config_json(content)
-                    if fixed:
-                        return fixed
-                    
-                    last_error = e
-                    
-            except Exception as e:
-                logger.warning(f"LLM call failed (attempt {attempt+1}): {str(e)[:80]}")
-                last_error = e
-                import time
-                time.sleep(2 * (attempt + 1))
-        
-        raise last_error or Exception("LLM call failed")
+        """LLM call with retries and JSON repair logic. Delegates to LLMClient."""
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": prompt}
+        ]
+        return self.llm.chat_json_with_retry(messages=messages, temperature=0.7)
     
-    def _fix_truncated_json(self, content: str) -> str:
-        """Fix truncated JSON."""
-        content = content.strip()
-        
-        # Count unclosed braces/brackets
-        open_braces = content.count('{') - content.count('}')
-        open_brackets = content.count('[') - content.count(']')
-        
-        # Check whether there is an unclosed string
-        if content and content[-1] not in '",}]':
-            content += '"'
-        
-        # Close braces/brackets
-        content += ']' * open_brackets
-        content += '}' * open_braces
-        
-        return content
-    
-    def _try_fix_config_json(self, content: str) -> Optional[Dict[str, Any]]:
-        """Try repairing configuration JSON."""
-        import re
-        
-        # Fix truncated content
-        content = self._fix_truncated_json(content)
-        
-        # Extract JSON region
-        json_match = re.search(r'\{[\s\S]*\}', content)
-        if json_match:
-            json_str = json_match.group()
-            
-            # Remove newlines inside strings
-            def fix_string(match):
-                s = match.group(0)
-                s = s.replace('\n', ' ').replace('\r', ' ')
-                s = re.sub(r'\s+', ' ', s)
-                return s
-            
-            json_str = re.sub(r'"[^"\\]*(?:\\.[^"\\]*)*"', fix_string, json_str)
-            
-            try:
-                return json.loads(json_str)
-            except:
-                # Try removing all control characters
-                json_str = re.sub(r'[\x00-\x1f\x7f-\x9f]', ' ', json_str)
-                json_str = re.sub(r'\s+', ' ', json_str)
-                try:
-                    return json.loads(json_str)
-                except:
-                    pass
-        
-        return None
+
     
     def _generate_time_config(self, context: str, num_entities: int) -> Dict[str, Any]:
         """Generate time configuration."""

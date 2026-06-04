@@ -17,9 +17,9 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from ..config import Config
-from ..utils.logger import get_logger, log_llm_interaction
+from ..utils.llm_client import LLMClient
+from ..utils.logger import get_logger
 from .oasis_profile_generator import OasisAgentProfile
-from openai import OpenAI
 
 logger = get_logger("mirofish.synthetic_delegate")
 
@@ -97,13 +97,7 @@ class SyntheticDelegateGenerator:
 
     def __init__(self, llm_client=None):
         self.company_library = self._load_company_library()
-        self._api_key = Config.LLM_API_KEY
-        self._base_url = Config.LLM_BASE_URL
-        self._model = Config.LLM_MODEL_NAME
-        if llm_client:
-            self._llm = llm_client
-        else:
-            self._llm = OpenAI(api_key=self._api_key, base_url=self._base_url)
+        self._llm = llm_client or LLMClient()
 
     def _load_company_library(self) -> Dict[str, Any]:
         path = os.path.join(os.path.dirname(__file__), "../data/3gpp_companies.json")
@@ -261,26 +255,12 @@ class SyntheticDelegateGenerator:
             "}\n"
             f"Total delegate_count values must sum to exactly {total_delegates}."
         )
-        kwargs: Dict[str, Any] = {
-            "model": self._model,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-            "temperature": 0.3,
-            "max_tokens": 2048,
-        }
-        if Config.LLM_JSON_MODE:
-            kwargs["response_format"] = {"type": "json_object"}
-        response = self._llm.chat.completions.create(**kwargs)
-        content = response.choices[0].message.content or ""
-        content = re.sub(r"^```(?:json)?\s*\n?", "", content.strip(), flags=re.IGNORECASE)
-        content = re.sub(r"\n?```\s*$", "", content)
-        parsed = json.loads(content.strip())
-        log_llm_interaction(
-            source_file="synthetic_delegate_generator.py",
-            messages=kwargs["messages"],
-            response_text=content,
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+        parsed = self._llm.chat_json_with_retry(
+            messages=messages, temperature=0.3, max_tokens=2048
         )
         companies = [
             CompanySpec(
@@ -376,7 +356,7 @@ class SyntheticDelegateGenerator:
         wgs_str = ", ".join(company.typical_wgs) or "RAN1"
         system_prompt = (
             "You are a 3GPP standardization expert. Generate realistic delegate profiles "
-            "for a simulation. Output a JSON array only — no markdown, no commentary."
+            "for a simulation. Output a JSON object with a \"delegates\" array — no markdown, no commentary."
         )
         user_prompt = (
             f"Generate exactly {count} delegate profiles for {company.name} "
@@ -385,7 +365,7 @@ class SyntheticDelegateGenerator:
             f"Typical working groups: {wgs_str}\n"
             f"Company stance: {company.typical_stance}\n\n"
             f"Document excerpt (for context):\n{document_text[:3000]}\n\n"
-            "Return a JSON array where each element has:\n"
+            "Return a JSON object with a \"delegates\" array where each element has:\n"
             '{"name": "...", "username": "...", "bio": "...", '
             '"persona": "You are <name>, <rich background including company, WG, expertise, '
             'stance relevant to the debate topic>...", '
@@ -397,27 +377,13 @@ class SyntheticDelegateGenerator:
             '"seniority": "junior engineer|senior engineer|principal engineer|fellow", '
             '"stance": "...", "karma": int, "follower_count": int}'
         )
-        kwargs: Dict[str, Any] = {
-            "model": self._model,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-            "temperature": 0.7,
-            "max_tokens": 4096,
-        }
-        if Config.LLM_JSON_MODE:
-            kwargs["response_format"] = {"type": "json_object"}
-        response = self._llm.chat.completions.create(**kwargs)
-        content = response.choices[0].message.content or ""
-        content = re.sub(r"^```(?:json)?\s*\n?", "", content.strip(), flags=re.IGNORECASE)
-        content = re.sub(r"\n?```\s*$", "", content)
-        log_llm_interaction(
-            source_file="synthetic_delegate_generator.py",
-            messages=kwargs["messages"],
-            response_text=content,
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+        parsed = self._llm.chat_json_with_retry(
+            messages=messages, temperature=0.7, max_tokens=4096
         )
-        parsed = json.loads(content.strip())
         if isinstance(parsed, dict):
             items = parsed.get("delegates", parsed.get("profiles", list(parsed.values())[0]))
         else:
