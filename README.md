@@ -1,19 +1,16 @@
 <div align="center">
 
-<img src="./static/image/MiroFish_logo_compressed.jpeg" alt="MiroFish Logo" width="60%"/>
+# StandardsSim — 3GPP Standardization Simulation Fork
 
-# MiroFish — 3GPP Standardization Simulation Fork
-
-This repository is a fork of [666ghj/MiroFish](https://github.com/666ghj/MiroFish) (original, Chinese) via the English translation at [666ghj/MiroFish-EN](https://github.com/666ghj/MiroFish-EN).
-This fork by [Polypod](https://github.com/Polypod) extends MiroFish with 3GPP telecom standardization simulation capabilities.
+This repository is based on [666ghj/MiroFish](https://github.com/666ghj/MiroFish) and additionally extended with  OASIS (Open Agent Social Interaction Simulations giving a framework for 3GPP telecom standardization simulation capabilities.
 
 </div>
 
-## ⚡ What is MiroFish?
+## ⚡ What is it?
 
-**MiroFish** is a multi-agent social simulation engine. Upload seed documents, describe a prediction requirement in natural language, and MiroFish builds a population of AI agents with independent personalities, long-term memory, and behavioral logic — then runs them in a simulated social environment.
+**A** multi-agent social simulation engine. Upload seed documents, describe a prediction requirement in natural language, and builds a population of AI agents with independent personalities, long-term memory, and behavioral logic — then runs them in a simulated social environment.
 
-For a full description, demos, and background see the upstream project: [666ghj/MiroFish-EN](https://github.com/666ghj/MiroFish-EN).
+For a full description and background see the upstream project: [666ghj/MiroFish-EN](https://github.com/666ghj/MiroFish-EN).
 
 The simulation engine is powered by **[OASIS (Open Agent Social Interaction Simulations)](https://github.com/camel-ai/oasis)** by the CAMEL-AI team.
 
