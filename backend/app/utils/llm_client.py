@@ -158,6 +158,10 @@ class LLMClient:
                 }
                 if max_tokens is not None:
                     kwargs["max_tokens"] = max_tokens
+                # LLM_JSON_MODE is the operator-level "my provider supports
+                # response_format=json_object" flag. When false, we still call
+                # this retry helper but rely on _strip_fences / _try_repair_json
+                # to recover valid JSON from the prose response.
                 if Config.LLM_JSON_MODE:
                     kwargs["response_format"] = {"type": "json_object"}
 
@@ -165,8 +169,15 @@ class LLMClient:
                 content_raw = response.choices[0].message.content or ""
                 finish_reason = response.choices[0].finish_reason
 
-                # Strip think tags and fences
-                content = re.sub(r'<think>[\s\S]*?</think>', '', content_raw).strip()
+                # Strip think tags only outside JSON. Models that emit
+                # <think>…</think> always do so as a sibling of the JSON,
+                # never inside string values, so it's safe to strip from
+                # the prefix preceding the first JSON delimiter and from
+                # the suffix following the last one. Operating on the whole
+                # content would corrupt valid JSON whose string fields
+                # legitimately contain those substrings (e.g., echoed
+                # document text).
+                content = _strip_think_outside_json(content_raw).strip()
                 content = _strip_fences(content)
 
                 log_llm_interaction(
@@ -188,15 +199,50 @@ class LLMClient:
                     if repaired is not None:
                         return repaired
                     last_error = e
+                    # Back off before retrying so we don't hammer the API
+                    # when the model keeps returning malformed JSON.
+                    if attempt < max_attempts - 1:
+                        time.sleep(backoff_base * (attempt + 1))
 
             except Exception as e:
                 last_error = e
-                time.sleep(backoff_base * (attempt + 1))
+                if attempt < max_attempts - 1:
+                    time.sleep(backoff_base * (attempt + 1))
 
+        if isinstance(last_error, json.JSONDecodeError):
+            raise ValueError(
+                f"Invalid JSON returned by LLM after {max_attempts} attempts: {last_error}"
+            ) from last_error
         raise last_error or Exception("LLM JSON call failed after retries")
 
 
 # ─── Private helpers ───────────────────────────────────────────────────────────
+
+def _strip_think_outside_json(text: str) -> str:
+    """
+    Remove <think>…</think> blocks that appear before/after the JSON payload,
+    leaving any inside the JSON content untouched.
+    """
+    if "<think>" not in text:
+        return text
+    # Locate the first JSON delimiter.
+    first = -1
+    for ch in ('{', '['):
+        idx = text.find(ch)
+        if idx != -1 and (first == -1 or idx < first):
+            first = idx
+    if first == -1:
+        # No JSON delimiter at all — strip globally as a fallback.
+        return re.sub(r'<think>[\s\S]*?</think>', '', text)
+    # Locate the matching last delimiter to identify the trailing prose.
+    last = max(text.rfind('}'), text.rfind(']'))
+    prefix = re.sub(r'<think>[\s\S]*?</think>', '', text[:first])
+    body = text[first:last + 1] if last >= first else text[first:]
+    suffix = ''
+    if last >= first:
+        suffix = re.sub(r'<think>[\s\S]*?</think>', '', text[last + 1:])
+    return prefix + body + suffix
+
 
 def _strip_fences(text: str) -> str:
     """Remove markdown code fence wrappers from LLM output."""
@@ -210,8 +256,14 @@ def _fix_truncated_json(content: str) -> str:
     """Attempt to close unclosed brackets/braces in truncated JSON."""
     content = content.strip()
 
-    # Close an unclosed string literal
-    if content and content[-1] not in '",}]':
+    # Close an unclosed string literal only when the content is genuinely
+    # mid-string. Heuristic: walk the content tracking string state and
+    # whether we just emitted a structural delimiter; if we ended inside a
+    # string, append a closing quote. Otherwise leave it alone — the old
+    # heuristic of "last char not in \",}]\" → append \"" misfired after
+    # a digit or whitespace following a comma in an array (e.g. "[1,2,"),
+    # producing an unterminated string.
+    if _ends_inside_string(content):
         content += '"'
 
     open_brackets = content.count('[') - content.count(']')
@@ -223,6 +275,22 @@ def _fix_truncated_json(content: str) -> str:
     return content
 
 
+def _ends_inside_string(content: str) -> bool:
+    """Return True if `content` ends inside an unterminated JSON string literal."""
+    in_string = False
+    escape = False
+    for ch in content:
+        if escape:
+            escape = False
+            continue
+        if ch == '\\' and in_string:
+            escape = True
+            continue
+        if ch == '"':
+            in_string = not in_string
+    return in_string
+
+
 def _try_repair_json(content: str) -> Optional[Dict[str, Any]]:
     """Try multiple strategies to extract valid JSON from malformed content."""
     # Strategy 1: fix truncation
@@ -231,6 +299,14 @@ def _try_repair_json(content: str) -> Optional[Dict[str, Any]]:
         return json.loads(fixed)
     except json.JSONDecodeError:
         pass
+
+    # Strategy 1b: strip trailing commas (`[1, 2,]` → `[1, 2]`).
+    no_trailing_commas = re.sub(r',(\s*[}\]])', r'\1', fixed)
+    if no_trailing_commas != fixed:
+        try:
+            return json.loads(no_trailing_commas)
+        except json.JSONDecodeError:
+            pass
 
     # Strategy 2: extract outermost JSON object
     json_match = re.search(r'\{[\s\S]*\}', content)

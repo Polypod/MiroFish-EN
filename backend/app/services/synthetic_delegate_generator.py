@@ -97,7 +97,23 @@ class SyntheticDelegateGenerator:
 
     def __init__(self, llm_client=None):
         self.company_library = self._load_company_library()
-        self._llm = llm_client or LLMClient()
+        # Lazy-construct LLMClient so manual_config and rule-based fallback
+        # paths work without LLM_API_KEY being set.
+        self._llm_override = llm_client
+        self.__llm_cached: Optional[LLMClient] = None
+
+    @property
+    def _llm(self) -> LLMClient:
+        if self._llm_override is not None:
+            return self._llm_override
+        if self.__llm_cached is None:
+            self.__llm_cached = LLMClient()
+        return self.__llm_cached
+
+    @_llm.setter
+    def _llm(self, value):
+        # Tests poke ._llm directly with a MagicMock; honor that.
+        self._llm_override = value
 
     def _load_company_library(self) -> Dict[str, Any]:
         path = os.path.join(os.path.dirname(__file__), "../data/3gpp_companies.json")
@@ -384,10 +400,26 @@ class SyntheticDelegateGenerator:
         parsed = self._llm.chat_json_with_retry(
             messages=messages, temperature=0.7, max_tokens=4096
         )
-        if isinstance(parsed, dict):
-            items = parsed.get("delegates", parsed.get("profiles", list(parsed.values())[0]))
-        else:
+        items: List[Any] = []
+        if isinstance(parsed, list):
             items = parsed
+        elif isinstance(parsed, dict):
+            if isinstance(parsed.get("delegates"), list):
+                items = parsed["delegates"]
+            elif isinstance(parsed.get("profiles"), list):
+                items = parsed["profiles"]
+            else:
+                # Last-resort: pick the first list-valued field
+                for v in parsed.values():
+                    if isinstance(v, list):
+                        items = v
+                        break
+        if not items:
+            logger.warning(
+                f"LLM returned no usable delegate list for {company.name}; "
+                "falling back to rule-based generation."
+            )
+            return self._generate_rule_based_batch(company, count, id_offset)
         profiles: List[OasisAgentProfile] = []
         nodes: List[SyntheticEntityNode] = []
         for i, d in enumerate(items[:count]):

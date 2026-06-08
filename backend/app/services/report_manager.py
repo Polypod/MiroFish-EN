@@ -439,12 +439,19 @@ class ReportManager:
                 level = len(heading_match.group(1))
                 title = heading_match.group(2).strip()
                 
-                # Check duplicate heading in recent 5 lines
+                # Check duplicate heading in recent 5 lines.
+                # Compare BOTH level and title — a level-3 subheading sharing
+                # text with a level-2 section title is intentional nesting,
+                # not a duplicate.
                 is_duplicate = False
                 for j in range(max(0, len(processed_lines) - 5), len(processed_lines)):
                     prev_line = processed_lines[j].strip()
                     prev_match = re.match(r'^(#{1,6})\s+(.+)$', prev_line)
-                    if prev_match and prev_match.group(2).strip() == title:
+                    if (
+                        prev_match
+                        and prev_match.group(2).strip() == title
+                        and len(prev_match.group(1)) == level
+                    ):
                         is_duplicate = True
                         break
                 

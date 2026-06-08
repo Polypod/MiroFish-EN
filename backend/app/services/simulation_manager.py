@@ -408,9 +408,14 @@ class SimulationManager:
                     response_text=f"generated_profiles_count={len(profiles)}",
                 )
             
-            # Merge synthetic profiles — must happen before save_profiles calls
+            # Merge synthetic profiles — must happen before save_profiles calls.
+            # Anchor synthetic user_ids to len(filtered.entities) (the index space
+            # SimulationConfigGenerator uses when it builds agent_ids from
+            # `filtered.entities + synthetic_nodes`). Using len(profiles) would
+            # desync if the generator drops/skips any real entity.
+            real_entity_count = len(filtered.entities)
             for i, sp in enumerate(synthetic_profiles):
-                sp.user_id = len(profiles) + i
+                sp.user_id = real_entity_count + i
             profiles = profiles + synthetic_profiles
             state.profiles_count = len(profiles)
 
@@ -543,11 +548,27 @@ class SimulationManager:
             (is_prepared: bool, info: dict)
         """
         sim_dir = self._get_simulation_dir(simulation_id)
-        
+
         if not os.path.exists(sim_dir):
             return False, {"reason": "Simulation directory does not exist"}
-        
-        required_files = ["state.json", "simulation_config.json", "reddit_profiles.json", "twitter_profiles.csv"]
+
+        state_file = os.path.join(sim_dir, "state.json")
+        enable_twitter = True
+        enable_reddit = True
+        if os.path.exists(state_file):
+            try:
+                with open(state_file, 'r', encoding='utf-8') as f:
+                    _state_peek = json.load(f)
+                enable_twitter = _state_peek.get("enable_twitter", True)
+                enable_reddit = _state_peek.get("enable_reddit", True)
+            except Exception:
+                pass
+
+        required_files = ["state.json", "simulation_config.json"]
+        if enable_reddit:
+            required_files.append("reddit_profiles.json")
+        if enable_twitter:
+            required_files.append("twitter_profiles.csv")
         existing_files = []
         missing_files = []
         for f in required_files:
@@ -569,13 +590,21 @@ class SimulationManager:
             
             prepared_statuses = ["ready", "preparing", "running", "completed", "stopped", "failed"]
             if status in prepared_statuses and config_generated:
-                profiles_file = os.path.join(sim_dir, "reddit_profiles.json")
                 profiles_count = 0
+                profiles_file = (
+                    os.path.join(sim_dir, "reddit_profiles.json") if enable_reddit
+                    else os.path.join(sim_dir, "twitter_profiles.csv")
+                )
                 if os.path.exists(profiles_file):
-                    with open(profiles_file, 'r', encoding='utf-8') as f:
-                        profiles_data = json.load(f)
-                        profiles_count = len(profiles_data) if isinstance(profiles_data, list) else 0
-                
+                    if profiles_file.endswith(".json"):
+                        with open(profiles_file, 'r', encoding='utf-8') as f:
+                            profiles_data = json.load(f)
+                            profiles_count = len(profiles_data) if isinstance(profiles_data, list) else 0
+                    else:
+                        with open(profiles_file, 'r', encoding='utf-8') as f:
+                            # CSV: count non-header lines
+                            profiles_count = max(0, sum(1 for _ in f) - 1)
+
                 # Auto-fix preparing -> ready
                 if status == "preparing":
                     try:
@@ -584,8 +613,11 @@ class SimulationManager:
                         with open(state_file, 'w', encoding='utf-8') as f:
                             json.dump(state_data, f, ensure_ascii=False, indent=2)
                         status = "ready"
-                    except Exception:
-                        pass
+                    except Exception as fix_err:
+                        logger.warning(
+                            f"check_prepared: failed to auto-update status preparing->ready for "
+                            f"{simulation_id}: {fix_err}"
+                        )
                 
                 return True, {
                     "status": status,

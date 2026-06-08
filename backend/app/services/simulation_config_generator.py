@@ -531,10 +531,18 @@ Field descriptions:
             logger.warning(f"agents_per_hour_max ({agents_per_hour_max}) exceeds total agents ({num_entities}); fixed")
             agents_per_hour_max = max(agents_per_hour_min + 1, num_entities // 2)
         
-        # Ensure min < max
+        # Ensure min < max strictly. Halving max collapses the range when max==1
+        # (1//2==0 → clamp to 1 → min==max). Lower min first; if that fails
+        # (min already 1), raise max instead, capped at num_entities.
         if agents_per_hour_min >= agents_per_hour_max:
-            agents_per_hour_min = max(1, agents_per_hour_max // 2)
-            logger.warning(f"agents_per_hour_min >= max; fixed to {agents_per_hour_min}")
+            if agents_per_hour_min > 1:
+                agents_per_hour_min = max(1, agents_per_hour_min - 1)
+            else:
+                agents_per_hour_max = max(2, min(agents_per_hour_max + 1, max(2, num_entities)))
+            logger.warning(
+                f"agents_per_hour_min >= max; adjusted to "
+                f"min={agents_per_hour_min}, max={agents_per_hour_max}"
+            )
         
         return TimeSimulationConfig(
             total_simulation_hours=result.get("total_simulation_hours", 72),

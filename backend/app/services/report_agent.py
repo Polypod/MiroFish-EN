@@ -159,28 +159,48 @@ class ReportLogger:
 
 
 class ReportConsoleLogger:
-    """Console-style logger for Report Agent. Writes to console_log.txt."""
-    
+    """
+    Console-style logger for Report Agent. Writes to console_log.txt.
+
+    The 'mirofish.report_agent' / 'mirofish.zep_tools' loggers are global
+    singletons, so two concurrent ReportAgent runs would otherwise cross-
+    contaminate each other's console_log.txt. We attach a thread-scoped
+    filter to the file handler so it only writes log records emitted from
+    the thread that constructed this logger.
+    """
+
     def __init__(self, report_id: str):
+        import logging
+        import threading
         self.report_id = report_id
         self.log_file_path = os.path.join(
             Config.UPLOAD_FOLDER, 'reports', report_id, 'console_log.txt'
         )
         os.makedirs(os.path.dirname(self.log_file_path), exist_ok=True)
-        self._file_handler = None
+        self._owner_thread_id = threading.get_ident()
+        self._file_handler: Optional[logging.Handler] = None
         self._setup_file_handler()
-    
+
     def _setup_file_handler(self):
         import logging
+        import threading
+
+        owner_id = self._owner_thread_id
+
+        class _ThreadFilter(logging.Filter):
+            def filter(self, record: logging.LogRecord) -> bool:
+                return threading.get_ident() == owner_id
+
         self._file_handler = logging.FileHandler(self.log_file_path, mode='a', encoding='utf-8')
         self._file_handler.setLevel(logging.INFO)
         formatter = logging.Formatter('[%(asctime)s] %(levelname)s: %(message)s', datefmt='%H:%M:%S')
         self._file_handler.setFormatter(formatter)
+        self._file_handler.addFilter(_ThreadFilter())
         for name in ['mirofish.report_agent', 'mirofish.zep_tools']:
             target = logging.getLogger(name)
             if self._file_handler not in target.handlers:
                 target.addHandler(self._file_handler)
-    
+
     def close(self):
         import logging
         if self._file_handler:
@@ -190,7 +210,7 @@ class ReportConsoleLogger:
                     target.removeHandler(self._file_handler)
             self._file_handler.close()
             self._file_handler = None
-    
+
     def __del__(self):
         self.close()
 
@@ -268,6 +288,17 @@ class ReportAgent:
             }
         }
     
+    @staticmethod
+    def _coerce_int(params: Dict[str, Any], key: str, default: int) -> int:
+        """Read params[key] tolerating null/missing and string-encoded ints."""
+        value = params.get(key, default)
+        if value is None:
+            return default
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return default
+
     def _execute_tool(self, tool_name: str, parameters: Dict[str, Any], report_context: str = "") -> str:
         logger.info(f"Execute tool: {tool_name}, params: {parameters}")
         try:
@@ -281,20 +312,22 @@ class ReportAgent:
             elif tool_name == "panorama_search":
                 query = parameters.get("query", "")
                 include_expired = parameters.get("include_expired", True)
-                if isinstance(include_expired, str):
+                if include_expired is None:
+                    include_expired = True
+                elif isinstance(include_expired, str):
                     include_expired = include_expired.lower() in ['true', '1', 'yes']
                 return self.zep_tools.panorama_search(
                     graph_id=self.graph_id, query=query, include_expired=include_expired
                 ).to_text()
             elif tool_name == "quick_search":
                 query = parameters.get("query", "")
-                limit = int(parameters.get("limit", 10)) if isinstance(parameters.get("limit"), str) else parameters.get("limit", 10)
+                limit = self._coerce_int(parameters, "limit", 10)
                 return self.zep_tools.quick_search(
                     graph_id=self.graph_id, query=query, limit=limit
                 ).to_text()
             elif tool_name == "interview_agents":
                 topic = parameters.get("interview_topic", parameters.get("query", ""))
-                max_agents = min(int(parameters.get("max_agents", 5)) if isinstance(parameters.get("max_agents"), str) else parameters.get("max_agents", 5), 10)
+                max_agents = min(self._coerce_int(parameters, "max_agents", 5), 10)
                 return self.zep_tools.interview_agents(
                     simulation_id=self.simulation_id, interview_requirement=topic,
                     simulation_requirement=self.simulation_requirement, max_agents=max_agents
@@ -398,12 +431,12 @@ class ReportAgent:
         )
 
         try:
-            response = self.llm.chat_json(
+            response = self.llm.chat_json_with_retry(
                 messages=[
                     {"role": "system", "content": PLAN_SYSTEM_PROMPT},
                     {"role": "user", "content": user_prompt}
                 ],
-                temperature=0.3
+                temperature=0.3,
             )
             
             if progress_callback:
@@ -483,8 +516,10 @@ class ReportAgent:
             
             response = self.llm.chat(messages=messages, temperature=0.5, max_tokens=4096)
 
-            if response is None:
-                logger.warning(f"Section {section.title} iteration {iteration + 1}: LLM returned None")
+            # LLMClient.chat coerces None content to '' and strips <think>…</think>.
+            # Treat empty/whitespace-only output as a transient failure and retry.
+            if not response or not response.strip():
+                logger.warning(f"Section {section.title} iteration {iteration + 1}: LLM returned empty response")
                 if iteration < max_iterations - 1:
                     messages.append({"role": "assistant", "content": "(empty response)"})
                     messages.append({"role": "user", "content": "Please continue generating content."})
@@ -588,12 +623,12 @@ class ReportAgent:
         messages.append({"role": "user", "content": REACT_FORCE_FINAL_MSG})
         response = self.llm.chat(messages=messages, temperature=0.5, max_tokens=4096)
 
-        if response is None:
+        if not response or not response.strip():
             final_answer = "(Section generation failed: LLM returned an empty response.)"
         elif "Final Answer:" in response:
             final_answer = response.split("Final Answer:")[-1].strip()
         else:
-            final_answer = response
+            final_answer = response.strip()
         
         if self.report_logger:
             self.report_logger.log_section_content(section.title, section_index, final_answer, tool_calls_count)
